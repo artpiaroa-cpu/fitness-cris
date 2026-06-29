@@ -1,0 +1,24 @@
+# Your private notebook id (copy from .notebooklm-id.example)
+.notebooklm-id
+
+# Your private lifting history — never commit this.
+# (The committed data/strong_workouts.example.csv is kept as a format reference.)
+data/strong_workouts.csv
+
+# Generated training program
+program.md
+
+# Scraped video lists / scratch
+*.failed.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.uv/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

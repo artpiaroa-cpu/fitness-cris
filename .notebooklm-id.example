@@ -1,0 +1,8 @@
+# Copy this file to ".notebooklm-id" and replace the line below with your own
+# NotebookLM notebook id (printed by `notebooklm create "..."`).
+#
+#   cp .notebooklm-id.example .notebooklm-id
+#
+# Lines starting with '#' and blank lines are ignored; the first real line is
+# used as the notebook id. You can also set NOTEBOOKLM_ID instead of this file.
+PASTE_YOUR_NOTEBOOK_ID_HERE

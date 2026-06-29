@@ -1,0 +1,6 @@
+# Python dependencies for the scripts. The recommended way to run everything is
+# with uv (the scripts declare their own deps via PEP 723 inline metadata, so
+# `uv run scripts/<name>.py` installs them automatically). This file is a
+# fallback for `pip install -r requirements.txt` in a plain virtualenv.
+notebooklm-py[browser]>=0.7
+yt-dlp>=2024.0.0
