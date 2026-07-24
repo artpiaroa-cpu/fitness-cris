@@ -23,6 +23,8 @@ hallucinated training claims. Open the folder in Claude Code and say
 | `scripts/load_channel.py` | `scrape` a channel's video list, then `load` the videos into your notebook |
 | `scripts/ask_cited.py` | Ask the notebook a question, print the answer + real citations |
 | `coach/strong_parser.py` | Summarize your Strong app export (weekly volume, frequency, rep ranges) |
+| `coach/exercise_catalog.py` | Match logged lifts to real muscle groups; search 1,324 exercises by muscle/equipment |
+| `scripts/build_exercise_catalog.py` | Rebuild `data/exercises.min.json` from the upstream dataset |
 | `.claude/skills/get-jacked/` | The `interview me to get jacked` coaching skill for Claude Code |
 | `.notebooklm-id.example` | Template for storing your notebook id |
 | `data/strong_workouts.example.csv` | Example of the Strong export format |
@@ -140,6 +142,32 @@ python3 coach/strong_parser.py data/strong_workouts.csv
 ```
 
 ---
+
+## Exercise catalog
+
+`data/exercises.min.json` holds 1,324 exercises (target muscle, secondary
+muscles, equipment, and step-by-step instructions in English + Spanish), built
+from [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset).
+
+It does two things: it makes the volume analysis accurate (logged lifts are
+matched to their real target muscle instead of guessed from keywords), and it
+lets the coach propose exercises filtered by the equipment you actually have.
+
+```bash
+# What muscle does a logged lift hit?
+python3 coach/exercise_catalog.py "Romanian Deadlift"
+
+# Find chest exercises you can do with a barbell
+python3 coach/exercise_catalog.py --muscle chest --equipment barbell
+
+# Rebuild the catalog from upstream (e.g. to add more languages)
+uv run scripts/build_exercise_catalog.py --languages en,es
+```
+
+Licensing: the exercise data and text instructions are MIT. The upstream
+images/GIFs are © [Gym visual](https://gymvisual.com/) and are **not** vendored
+here — only their relative paths are kept. Get your own license for commercial
+use.
 
 ## Notes & troubleshooting
 

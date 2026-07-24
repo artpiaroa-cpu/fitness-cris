@@ -43,6 +43,25 @@ MUSCLE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 
 
 def classify_muscle(exercise: str) -> str:
+    """Classify a logged exercise into a muscle group.
+
+    Prefers the vendored exercise catalog (real ``target`` muscle for 1,324
+    exercises); falls back to the keyword table when the catalog is missing or
+    the name is too unusual to match confidently.
+    """
+    try:
+        from exercise_catalog import muscle_group_for
+    except ImportError:  # imported as a package (coach.strong_parser)
+        try:
+            from .exercise_catalog import muscle_group_for  # type: ignore[no-redef]
+        except ImportError:
+            muscle_group_for = None  # type: ignore[assignment]
+
+    if muscle_group_for is not None:
+        group = muscle_group_for(exercise)
+        if group:
+            return group
+
     name = exercise.lower()
     for muscle, keys in MUSCLE_KEYWORDS:
         if any(k in name for k in keys):

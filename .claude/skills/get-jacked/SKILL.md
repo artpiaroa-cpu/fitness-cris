@@ -45,6 +45,12 @@ this order, but follow the user's answers naturally:
 
 1. **Training volume** — sets per muscle per week, and where they are now.
 2. **Exercise selection** — compound vs isolation, equipment, weak points.
+   Use the catalog to propose lifts the user can actually perform:
+   ```
+   python3 coach/exercise_catalog.py --muscle chest --equipment barbell
+   ```
+   Cite Jeff for *why* an exercise earns its place; use the catalog for *which*
+   variations are available with their equipment.
 3. **Progression** — how they currently progress (load, reps, RPE), and how
    they should.
 4. **Frequency** — how many sessions per week, how to split muscles across them.
