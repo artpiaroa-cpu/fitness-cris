@@ -9,7 +9,15 @@
    y no da más permisos que los que concede RLS, que filtra por auth.uid().
    ══════════════════════════════════════════════════════════════════════════ */
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+/* supabase-js va servido desde el propio sitio (vendor/supabase.js, cargado
+   antes que los módulos en index.html). Antes se importaba de esm.sh, pero eso
+   convertía un CDN externo en punto único de fallo: si no respondía, la app se
+   quedaba en blanco y el login no funcionaba. El bundle UMD expone
+   window.supabase. */
+const { createClient } = globalThis.supabase || {};
+if (typeof createClient !== 'function') {
+  throw new Error('vendor/supabase.js no se ha cargado antes que los módulos');
+}
 
 export const SUPABASE_URL = 'https://owhxwqktbkpiqrnqnkhn.supabase.co';
 export const SUPABASE_KEY = 'sb_publishable_iCrXXInKmbVYpd1TXs1Xfw_og_gqzQ5';
@@ -22,11 +30,14 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   },
 });
 
-/* ══ Perfiles disponibles en el selector ═════════════════════════════════ */
+/* ══ Perfiles disponibles en el selector ═════════════════════════════════
+   Debe coincidir con las cuentas sembradas en auth.users. Si añades o
+   renombras alguien, actualiza también la base (email en auth.users,
+   identity_data en auth.identities y name en public.profiles).            */
 export const PERFILES = [
   { email: 'cris@entreno.app', name: 'Cris' },
-  { email: 'ella@entreno.app', name: 'Ella' },
-  { email: 'tres@entreno.app', name: 'Perfil 3' },
+  { email: 'laura@entreno.app', name: 'Laura' },
+  { email: 'socrates@entreno.app', name: 'Sócrates' },
 ];
 
 /* ══ Errores en español ══════════════════════════════════════════════════ */
@@ -54,7 +65,12 @@ export function msgError(err) {
   if (m.includes('jwt') || m.includes('session')) {
     return 'La sesión ha caducado. Vuelve a entrar.';
   }
-  return 'No se ha podido completar. Inténtalo otra vez.';
+  /* Para lo que no reconocemos, deja ver la causa: un mensaje genérico impide
+     diagnosticar cuando algo falla en producción. Se recorta para que no
+     invada la pantalla, y el error completo va a la consola. */
+  try { console.error('[entreno] error sin traducir:', err); } catch (e) { /* noop */ }
+  const corto = raw.replace(/\s+/g, ' ').slice(0, 120);
+  return corto ? 'No se ha podido completar: ' + corto : 'No se ha podido completar. Inténtalo otra vez.';
 }
 
 function isNetworkError(err) {

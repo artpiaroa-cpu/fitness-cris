@@ -297,8 +297,8 @@ const STEPS = [
     block: 'Datos', q: '¿Qué mapa corporal usamos?',
     why: 'Solo cambia el dibujo del cuerpo en la vista Cuerpo. No afecta a la rutina.',
     html: () => optCards('sex', [
-      ['f', 'Ella', 'Figura femenina en el mapa muscular.'],
-      ['m', 'Él', 'Figura masculina en el mapa muscular.'],
+      ['f', 'Femenino', 'Figura femenina en el mapa muscular.'],
+      ['m', 'Masculino', 'Figura masculina en el mapa muscular.'],
     ], draft.sex, true),
     valid: () => !!draft.sex,
   },

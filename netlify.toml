@@ -11,17 +11,17 @@
   NODE_VERSION = "20"
 
 # ── Cabeceras de seguridad ────────────────────────────────────────────────
-# La CSP enumera exactamente los tres orígenes externos que la app necesita:
-#   esm.sh                → el módulo supabase-js v2
+# supabase-js va servido desde el propio sitio (web/vendor/), así que script-src
+# se queda en 'self': ni CDN externo ni 'unsafe-inline'. Solo quedan dos
+# orígenes externos:
 #   *.supabase.co         → REST y autenticación (wss para realtime)
 #   raw.githubusercontent → los GIF del catálogo de ejercicios
-# script-src NO lleva 'unsafe-inline': no hay ni un manejador en línea ni un
-# <script> incrustado. style-src sí lo lleva porque la interfaz usa atributos
-# style="…" heredados del prototipo.
+# style-src sí lleva 'unsafe-inline' porque la interfaz usa atributos style="…"
+# heredados del prototipo.
 [[headers]]
   for = "/*"
   [headers.values]
-    Content-Security-Policy = "default-src 'self'; script-src 'self' https://esm.sh; connect-src 'self' https://owhxwqktbkpiqrnqnkhn.supabase.co wss://owhxwqktbkpiqrnqnkhn.supabase.co https://esm.sh; img-src 'self' data: https://raw.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; worker-src 'self'; manifest-src 'self'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; connect-src 'self' https://owhxwqktbkpiqrnqnkhn.supabase.co wss://owhxwqktbkpiqrnqnkhn.supabase.co; img-src 'self' data: https://raw.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; worker-src 'self'; manifest-src 'self'"
     X-Content-Type-Options = "nosniff"
     X-Frame-Options = "DENY"
     Referrer-Policy = "no-referrer"

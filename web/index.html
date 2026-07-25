@@ -3,6 +3,15 @@
 <meta name="color-scheme" content="dark light">
 <meta name="description" content="Entreno privado: rutina, sesión y volumen semanal.">
 <title>NEXUS · Entreno</title>
+
+<!-- Icono en SVG embebido: evita el 404 de /favicon.ico y sirve de icono al
+     añadir la app a la pantalla de inicio del móvil. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2306070C'/%3E%3Cg stroke='%2363F2DA' stroke-width='6' stroke-linecap='round'%3E%3Cpath d='M18 22v20M46 22v20M10 27v10M54 27v10M18 32h28'/%3E%3C/g%3E%3C/svg%3E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Entreno">
+<meta name="theme-color" content="#06070C">
+
 <link rel="stylesheet" href="css/app.css">
 
 <!-- ══ Aviso de sin conexión ══ -->
@@ -190,8 +199,8 @@
   <section class="view" id="v-body">
     <div class="bar"><div class="grow"><p class="lbl">Series · 7 días</p><h1 class="title">Cuerpo</h1></div>
       <div class="sexpick" id="sexPick" role="group" aria-label="Perfil del cuerpo">
-        <button class="pick" type="button" data-sex="f" aria-pressed="true">Ella</button>
-        <button class="pick" type="button" data-sex="m" aria-pressed="false">Él</button></div>
+        <button class="pick" type="button" data-sex="f" aria-pressed="true">Femenino</button>
+        <button class="pick" type="button" data-sex="m" aria-pressed="false">Masculino</button></div>
       <button class="ib" id="flip" type="button" aria-label="Girar">⟳</button></div>
     <div class="pad">
       <div class="g2" style="gap:8px;margin-bottom:10px">
@@ -381,4 +390,8 @@
 </div>
 
 <script src="js/boot.js"></script>
+<!-- supabase-js servido desde el propio sitio: un script clásico se ejecuta
+     antes que cualquier módulo, así que window.supabase ya existe cuando
+     app.js importa db.js. Sin CDN externo, sin punto único de fallo. -->
+<script src="vendor/supabase.js"></script>
 <script type="module" src="js/app.js"></script>
