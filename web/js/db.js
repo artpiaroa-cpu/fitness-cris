@@ -20,7 +20,11 @@ if (typeof createClient !== 'function') {
 }
 
 export const SUPABASE_URL = 'https://owhxwqktbkpiqrnqnkhn.supabase.co';
-export const SUPABASE_KEY = 'sb_publishable_iCrXXInKmbVYpd1TXs1Xfw_og_gqzQ5';
+/* Clave anon clásica (JWT). Es pública por diseño: no concede más permisos que
+   los que deja pasar RLS. Usamos esta y no la `sb_publishable_…` porque la
+   clave publicable nueva no la aceptan todos los endpoints según versión, y el
+   login devolvía un error vacío. */
+export const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93aHh3cWt0YmtwaXFybnFua2huIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5OTM1MzUsImV4cCI6MjEwMDU2OTUzNX0.fo3UkKFUYfLcBEYQqBSSex62Vq92A6ucQ-LgU_IbDu8';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
@@ -65,12 +69,24 @@ export function msgError(err) {
   if (m.includes('jwt') || m.includes('session')) {
     return 'La sesión ha caducado. Vuelve a entrar.';
   }
-  /* Para lo que no reconocemos, deja ver la causa: un mensaje genérico impide
-     diagnosticar cuando algo falla en producción. Se recorta para que no
-     invada la pantalla, y el error completo va a la consola. */
-  try { console.error('[entreno] error sin traducir:', err); } catch (e) { /* noop */ }
-  const corto = raw.replace(/\s+/g, ' ').slice(0, 120);
-  return corto ? 'No se ha podido completar: ' + corto : 'No se ha podido completar. Inténtalo otra vez.';
+  /* Para lo que no reconocemos, deja ver la causa. Los errores de supabase-js
+     traen la información útil en propiedades que no salen al stringificar
+     (name, status, code), y el mensaje puede venir vacío: reunimos todo lo que
+     haya para poder diagnosticar en producción sin abrir la consola. */
+  try { console.error('[entreno] error sin traducir:', err, JSON.stringify(err)); } catch (e) { /* noop */ }
+  const piezas = [];
+  ['name', 'status', 'code', 'error', 'hint', 'details'].forEach((k) => {
+    const v = err && err[k];
+    if (v !== undefined && v !== null && v !== '' && typeof v !== 'object') {
+      piezas.push(k + '=' + String(v));
+    }
+  });
+  const limpio = raw && raw !== '{}' && raw !== '[object Object]'
+    ? raw.replace(/\s+/g, ' ').slice(0, 100) : '';
+  const detalle = [limpio, piezas.join(' · ')].filter(Boolean).join(' · ');
+  return detalle
+    ? 'No se ha podido completar · ' + detalle
+    : 'No se ha podido completar. Revisa la consola del navegador.';
 }
 
 function isNetworkError(err) {
