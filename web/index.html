@@ -1,0 +1,384 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="Entreno privado: rutina, sesión y volumen semanal.">
+<title>NEXUS · Entreno</title>
+<link rel="stylesheet" href="css/app.css">
+
+<!-- ══ Aviso de sin conexión ══ -->
+<div class="netbar" id="netbar" role="status" aria-live="polite">
+  <span class="dot" aria-hidden="true"></span><span id="netmsg">Sin conexión</span>
+</div>
+
+<!-- ══ SELECTOR DE PERFIL ══ -->
+<div class="gate hidden" id="gate">
+  <div class="gate-in">
+    <p class="brand">Nexus</p>
+    <h1>¿Quién entrena?</h1>
+    <p class="lead">Elige tu perfil para entrar.</p>
+    <div class="who-grid" id="whoGrid"></div>
+    <p class="note center" id="gateNote">App privada. La sesión queda guardada en este dispositivo.</p>
+  </div>
+</div>
+
+<!-- ══ CUESTIONARIO INICIAL ══ -->
+<div class="wiz hidden" id="wiz">
+  <div class="wz-top">
+    <div class="wz-bar"><i id="wzBar"></i></div>
+    <p class="wz-meta"><span id="wzStep">Paso 1</span><span class="grow"></span><span id="wzBlock">Datos</span></p>
+  </div>
+  <div class="wz-body" id="wzBody"></div>
+  <div class="wz-foot">
+    <button class="ib" id="wzBack" type="button" aria-label="Pregunta anterior">‹</button>
+    <button class="btn" id="wzNext" type="button">Seguir</button>
+  </div>
+</div>
+
+<div class="app hidden" id="app">
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <linearGradient id="irid" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#63F2DA"/><stop offset=".55" stop-color="#8B9DFF"/>
+      <stop offset="1" stop-color="#FF6FA5"/>
+    </linearGradient>
+    <!-- Volumen muscular en 4 pasos, luz superior-izquierda para dar relieve.
+         La escala salta de gris pizarra (nivel 1, muy por debajo) a cian pleno
+         (nivel 4, en rango) para que el déficit se lea de un vistazo. -->
+    <radialGradient id="mv4" cx="35%" cy="28%" r="82%">
+      <stop offset="0" stop-color="#B6FFF8"/>
+      <stop offset=".42" stop-color="#63F2DA"/>
+      <stop offset="1" stop-color="#0A6E68"/>
+    </radialGradient>
+    <radialGradient id="mv3" cx="35%" cy="28%" r="82%">
+      <stop offset="0" stop-color="#63F2DA" stop-opacity=".8"/>
+      <stop offset=".5" stop-color="#2FA79C" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#0A4B48" stop-opacity=".8"/>
+    </radialGradient>
+    <radialGradient id="mv2" cx="35%" cy="28%" r="82%">
+      <stop offset="0" stop-color="#4C8F92" stop-opacity=".62"/>
+      <stop offset="1" stop-color="#1D3A47" stop-opacity=".78"/>
+    </radialGradient>
+    <radialGradient id="mv1" cx="35%" cy="28%" r="82%">
+      <stop offset="0" stop-color="#41505F" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#1B2530" stop-opacity=".85"/>
+    </radialGradient>
+  </defs></svg>
+
+  <!-- ══ PANEL ══ -->
+  <section class="view on" id="v-dash">
+    <div class="bar"><div class="grow"><p class="lbl" id="dashDate">—</p>
+      <h1 class="title">Panel</h1></div>
+      <button class="ib" id="theme" type="button" aria-label="Cambiar tema">◐</button>
+      <button class="ib" id="goSet" type="button" aria-label="Ajustes">⚙</button></div>
+    <div class="pad">
+      <div class="hero">
+        <p class="lbl">Toca hoy</p><h2 id="heroName">—</h2>
+        <p id="heroSub">Cargando tu rutina…</p>
+        <div class="g2"><button class="btn" id="goToday" type="button">▶ Empezar</button>
+          <button class="btn ghost" id="goStudio2" type="button">Algo más suave</button></div>
+      </div>
+      <div class="rings">
+        <div class="rb"><div class="rw" style="width:68px;height:68px">
+          <svg width="68" height="68" viewBox="0 0 68 68"><circle class="tr" cx="34" cy="34" r="28" fill="none" stroke-width="5"/><circle class="fl" id="r1" cx="34" cy="34" r="28" fill="none" stroke-width="5" stroke="var(--cy)" stroke-dasharray="0 176"/></svg>
+          <div class="ctr"><b style="font-size:1rem" id="r1v">0</b></div></div>
+          <p class="n">Músculos</p><p class="s" id="r1s">/14</p></div>
+        <div class="rb"><div class="rw" style="width:98px;height:98px">
+          <svg width="98" height="98" viewBox="0 0 98 98"><circle class="tr" cx="49" cy="49" r="41" fill="none" stroke-width="7"/><circle class="fl" id="r2" cx="49" cy="49" r="41" fill="none" stroke-width="7" stroke="var(--mg)" stroke-dasharray="0 258"/></svg>
+          <div class="ctr"><b style="font-size:1.65rem" id="r2v">0</b></div></div>
+          <p class="n">Series</p><p class="s" id="r2s">/0</p></div>
+        <div class="rb"><div class="rw" style="width:68px;height:68px">
+          <svg width="68" height="68" viewBox="0 0 68 68"><circle class="tr" cx="34" cy="34" r="28" fill="none" stroke-width="5"/><circle class="fl" id="r3" cx="34" cy="34" r="28" fill="none" stroke-width="5" stroke="var(--gd)" stroke-dasharray="0 176"/></svg>
+          <div class="ctr"><b style="font-size:1rem" id="r3v">0</b></div></div>
+          <p class="n">Ejercicios</p><p class="s" id="r3s">/0</p></div>
+      </div>
+      <h2 class="sec">Tendencias</h2>
+      <div class="g2">
+        <div class="panel p"><p class="lbl">Volumen</p><div class="bars" id="bars"></div>
+          <p class="mono" id="volTxt" style="font-size:var(--fs-lg);font-weight:700;margin:9px 0 0">—</p></div>
+        <div class="panel p"><p class="lbl">Peso</p>
+          <div id="wSpark"></div>
+          <p class="mono" id="wTxt" style="font-size:var(--fs-lg);font-weight:700;margin:9px 0 0">—</p></div>
+      </div>
+      <h2 class="sec">Peso de hoy</h2>
+      <div class="panel p">
+        <div class="w-today">
+          <div><label class="f-lbl" for="wIn">Tu peso hoy (<span id="wUnit">kg</span>)</label>
+            <input class="in mono" id="wIn" type="text" inputmode="decimal" placeholder="—"></div>
+          <button class="btn ghost" id="wSave" type="button" style="width:auto;padding:13px 16px">Guardar</button>
+        </div>
+        <p class="note" id="wMsg">Se guarda una entrada por día; si repites, se actualiza.</p>
+      </div>
+      <h2 class="sec">Constancia · 30 días</h2>
+      <div class="panel p"><div class="heat" id="heat"></div>
+        <p class="mono" id="heatTxt" style="font-size:var(--fs-lg);font-weight:700;margin:11px 0 0">—</p></div>
+      <h2 class="sec">Tus datos</h2>
+      <div class="panel p">
+        <button class="btn ghost" id="expCsv" type="button">Exportar CSV</button>
+        <p class="note" id="expMsg">Una fila por serie: ejercicio, peso, repeticiones, RIR y si la marcaste.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ ENTRENAR ══ -->
+  <section class="view" id="v-work">
+    <div class="bar"><div class="grow"><p class="lbl" id="workLbl">Programa activo</p><h1 class="title">Entrenar</h1></div></div>
+    <div class="days" id="days"></div>
+    <div class="pad">
+      <div class="panel" style="margin-top:13px"><div id="wlist"></div></div>
+      <h2 class="sec">Modo</h2>
+      <div class="g2">
+        <button class="pick" type="button" data-mode="hyper" aria-pressed="true">Hipertrofia</button>
+        <button class="pick" type="button" data-mode="fuerza" aria-pressed="false">Fuerza · top set</button>
+      </div>
+      <p class="note" id="modeNote">Hipertrofia: series rectas con RIR objetivo que baja cada semana.</p>
+    </div>
+  </section>
+
+  <!-- ══ CREAR ══ -->
+  <section class="view" id="v-create">
+    <div class="bar"><div class="grow"><p class="lbl">Generador</p><h1 class="title">Crear rutina</h1></div></div>
+    <div class="pad">
+      <div class="panel p" style="text-align:center">
+        <p class="lbl">Dilo en voz alta</p>
+        <button class="mic" id="mic" type="button" aria-label="Dictar por voz">🎙</button>
+        <p class="heard" id="heard">"Glúteos y piernas, 4 días, solo máquinas"</p>
+      </div>
+      <textarea class="ta" id="brief" style="margin-top:11px"
+        placeholder="…o escríbelo. Ej: tren superior 3 días con mancuernas, 45 minutos"></textarea>
+      <h2 class="sec">Equipo</h2>
+      <div class="g3">
+        <button class="pick" type="button" data-eq="libre" aria-pressed="true">Peso libre</button>
+        <button class="pick" type="button" data-eq="maquina" aria-pressed="true">Máquinas</button>
+        <button class="pick" type="button" data-eq="corporal" aria-pressed="false">En casa</button>
+      </div>
+      <h2 class="sec">Objetivo</h2>
+      <div class="g2" id="focus">
+        <button class="pick" type="button" data-f="musculo" aria-pressed="true">Músculo</button>
+        <button class="pick" type="button" data-f="fuerza" aria-pressed="false">Fuerza</button>
+        <button class="pick" type="button" data-f="grasa" aria-pressed="false">Perder grasa</button>
+        <button class="pick" type="button" data-f="salud" aria-pressed="false">Salud</button>
+      </div>
+      <h2 class="sec">Ajustes</h2>
+      <div class="panel p">
+        <div class="field"><div class="grow"><h4>Días por semana</h4><p>Sesiones a repartir</p></div>
+          <div class="num-in"><button type="button" data-n="days" data-d="-1" aria-label="Menos días">−</button>
+            <span class="v" id="n-days">3</span><button type="button" data-n="days" data-d="1" aria-label="Más días">+</button></div></div>
+        <div class="field"><div class="grow"><h4>Minutos por sesión</h4><p>Marca cuántos ejercicios entran</p></div>
+          <div class="num-in"><button type="button" data-n="minutes" data-d="-5" aria-label="Menos minutos">−</button>
+            <span class="v" id="n-minutes">45</span><button type="button" data-n="minutes" data-d="5" aria-label="Más minutos">+</button></div></div>
+      </div>
+      <button class="btn" id="gen" type="button" style="margin-top:13px">Generar y guardar rutina</button>
+      <div id="genOut"></div>
+    </div>
+  </section>
+
+  <!-- ══ ESTUDIO ══ -->
+  <section class="view" id="v-studio">
+    <div class="bar"><div class="grow"><p class="lbl">Sin gimnasio</p><h1 class="title">Estudio</h1></div></div>
+    <div class="pad">
+      <div class="g2" style="grid-template-columns:repeat(4,1fr);gap:6px">
+        <button class="pick" type="button" data-st="casa" aria-pressed="true" style="padding:9px 4px;font-size:var(--fs-xs)">Casa</button>
+        <button class="pick" type="button" data-st="pilates" aria-pressed="false" style="padding:9px 4px;font-size:var(--fs-xs)">Pilates</button>
+        <button class="pick" type="button" data-st="movilidad" aria-pressed="false" style="padding:9px 4px;font-size:var(--fs-xs)">Movilidad</button>
+        <button class="pick" type="button" data-st="cardio" aria-pressed="false" style="padding:9px 4px;font-size:var(--fs-xs)">Cardio</button>
+      </div>
+      <div id="studioBody"></div>
+    </div>
+  </section>
+
+  <!-- ══ CUERPO ══ -->
+  <section class="view" id="v-body">
+    <div class="bar"><div class="grow"><p class="lbl">Series · 7 días</p><h1 class="title">Cuerpo</h1></div>
+      <div class="sexpick" id="sexPick" role="group" aria-label="Perfil del cuerpo">
+        <button class="pick" type="button" data-sex="f" aria-pressed="true">Ella</button>
+        <button class="pick" type="button" data-sex="m" aria-pressed="false">Él</button></div>
+      <button class="ib" id="flip" type="button" aria-label="Girar">⟳</button></div>
+    <div class="pad">
+      <div class="g2" style="gap:8px;margin-bottom:10px">
+        <button class="pick" type="button" data-side="front" aria-pressed="true">Frente</button>
+        <button class="pick" type="button" data-side="back" aria-pressed="false">Espalda</button>
+      </div>
+      <div class="panel p stage">
+        <div class="stage-in"><div class="flip" id="flipper"></div></div>
+      </div>
+      <h2 class="sec">Por grupo</h2>
+      <div class="scale">
+        <span class="lbl" style="letter-spacing:.14em">Falta</span>
+        <i style="background:#33404E"></i><i style="background:#4C8F92"></i>
+        <i style="background:#2FA79C"></i><i style="background:#63F2DA"></i>
+        <span class="lbl" style="letter-spacing:.14em">En rango</span>
+      </div>
+      <div id="mlist"></div>
+      <p class="note">Cuanto más apagado el músculo, más lejos está de su objetivo semanal. Toca cualquiera del mapa para ver cuántas series te faltan.</p>
+    </div>
+  </section>
+
+  <!-- ══ SESIÓN ══ -->
+  <section class="view" id="v-sess">
+    <div class="bar"><button class="ib" id="back" type="button" aria-label="Volver">‹</button>
+      <div class="grow"><p class="lbl" id="sMode">Hipertrofia</p>
+        <h1 class="title" id="sName">Sesión</h1></div>
+      <button class="ib" id="soundBtn" type="button" aria-pressed="true"
+        aria-label="Aviso sonoro al terminar el descanso">🔔</button>
+      <div class="rw" style="width:44px;height:44px">
+        <svg width="44" height="44" viewBox="0 0 44 44"><circle class="tr" cx="22" cy="22" r="18" fill="none" stroke-width="4"/><circle class="fl" id="rS" cx="22" cy="22" r="18" fill="none" stroke-width="4" stroke="var(--cy)" stroke-dasharray="0 113"/></svg>
+        <div class="ctr"><b style="font-size:.65rem" id="sTxt">0/0</b></div></div></div>
+    <div class="strip" id="strip"></div>
+    <div class="pad">
+      <div id="startBox"><button class="btn" id="startBtn" type="button">▶ Empezar entreno</button>
+        <p class="note">Arranca el cronómetro y los descansos saltan solos al marcar cada serie.</p></div>
+      <div class="live-bar" id="liveBar" style="display:none">
+        <span class="c" id="elapsed">0:00</span>
+        <div class="grow"><p class="l">En curso</p></div>
+        <span class="restmini" id="restMini" role="timer" aria-label="Descanso restante">
+          <span aria-hidden="true">⏱</span><b id="rest2">0:00</b></span>
+        <button class="ib" id="pauseBtn" type="button" aria-label="Pausar">❚❚</button>
+        <button class="ib" id="stopBtn" type="button" aria-label="Terminar">■</button></div>
+      <div id="exlist"></div>
+      <div class="panel p" id="finish" style="display:none;margin-top:16px">
+        <p class="lbl">Sesión completada</p>
+        <h3 style="margin:4px 0 3px;font-size:var(--fs-xl);font-weight:800">¿Cómo te fue?</h3>
+        <p class="note" style="margin:0 0 13px">Esto se revisa para ajustar la semana siguiente.</p>
+        <div class="g3" id="rpe">
+          <button class="pick" type="button" data-v="facil" aria-pressed="false">Fácil</button>
+          <button class="pick" type="button" data-v="justo" aria-pressed="false">En punto</button>
+          <button class="pick" type="button" data-v="duro" aria-pressed="false">Muy duro</button></div>
+        <textarea class="ta" id="note" style="margin-top:11px"
+          placeholder="¿Alguna molestia? Ej: en la sentadilla me molestó la rodilla."></textarea>
+        <button class="btn" id="save" type="button" style="margin-top:11px">Guardar sesión</button>
+        <p class="note" id="saved"></p></div>
+    </div>
+  </section>
+
+  <!-- ══ AJUSTES ══ -->
+  <section class="view" id="v-set">
+    <div class="bar"><button class="ib" id="setBack" type="button" aria-label="Volver">‹</button>
+      <div class="grow"><p class="lbl" id="setWho">Perfil</p><h1 class="title">Ajustes</h1></div></div>
+    <div class="pad">
+      <h2 class="sec">Unidades</h2>
+      <div class="panel p">
+        <div class="seg" id="unitSeg" role="group" aria-label="Sistema de unidades">
+          <button type="button" data-u="kg" aria-pressed="true">Kg · cm</button>
+          <button type="button" data-u="lb" aria-pressed="false">Lb · pies</button>
+        </div>
+        <p class="note" id="unitNote">Los pesos se guardan siempre en kilos; esto solo cambia cómo se muestran.</p>
+      </div>
+
+      <h2 class="sec">Tu perfil</h2>
+      <div class="panel p" id="setProfile"></div>
+
+      <h2 class="sec">Sesión</h2>
+      <div class="panel p">
+        <div class="set-row"><div class="grow"><h4>Aviso al terminar el descanso</h4>
+          <p>Dos pitidos y vibración cuando la cuenta llega a cero.</p></div>
+          <div class="seg" id="soundSeg" role="group" aria-label="Aviso sonoro">
+            <button type="button" data-s="1" aria-pressed="true">Sí</button>
+            <button type="button" data-s="0" aria-pressed="false">No</button></div></div>
+        <div class="set-row"><div class="grow"><h4>Rehacer el cuestionario</h4>
+          <p>Vuelve a preguntarte todo y genera una rutina nueva.</p></div>
+          <button class="btn ghost" id="redoWiz" type="button" style="width:auto;padding:11px 14px">Rehacer</button></div>
+      </div>
+
+      <h2 class="sec">Contraseña</h2>
+      <div class="panel p">
+        <p class="note" style="margin:0 0 11px">La inicial es compartida entre los tres perfiles. Cámbiala por una tuya.</p>
+        <div class="stack">
+          <div><label class="f-lbl" for="pw1">Contraseña nueva</label>
+            <input class="in" id="pw1" type="password" autocomplete="new-password" placeholder="Mínimo 6 caracteres"></div>
+          <div><label class="f-lbl" for="pw2">Repítela</label>
+            <input class="in" id="pw2" type="password" autocomplete="new-password" placeholder="Otra vez"></div>
+          <button class="btn" id="pwSave" type="button">Cambiar contraseña</button>
+          <p class="err" id="pwErr" role="alert"></p>
+          <p class="ok-msg" id="pwOk" role="status"></p>
+        </div>
+      </div>
+
+      <h2 class="sec">Cuenta</h2>
+      <div class="panel p">
+        <button class="btn ghost danger" id="signOut" type="button">Salir de este perfil</button>
+        <p class="note">Volverás al selector. Tus datos siguen guardados en la nube.</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="hud" id="hud"><div class="hud-in">
+  <span class="c" id="clock">2:00</span><span class="l" id="hudLab">Descanso</span>
+  <button type="button" id="less">−30</button><button type="button" id="more">+30</button>
+  <button type="button" id="skip">Saltar</button></div></div>
+
+<div class="kpad" id="kpad" aria-hidden="true">
+  <div class="kpad-in">
+    <div class="kp-top">
+      <button class="kp-info" id="kpTop" type="button" aria-label="Abrir calculadora de discos"></button>
+      <button class="ib" type="button" data-kfn="close" aria-label="Cerrar teclado">✕</button>
+    </div>
+    <div class="kp-dots" id="kpDots" style="display:none"></div>
+    <div class="kp-keys">
+      <button type="button" data-kd="1">1</button>
+      <button type="button" data-kd="2">2</button>
+      <button type="button" data-kd="3">3</button>
+      <button class="fn" type="button" data-kfn="rir" id="kpRirBtn" aria-pressed="false">RIR</button>
+      <button type="button" data-kd="4">4</button>
+      <button type="button" data-kd="5">5</button>
+      <button type="button" data-kd="6">6</button>
+      <button class="fn" type="button" data-kfn="fail" aria-label="Serie al fallo, RIR 0">F</button>
+      <button type="button" data-kd="7">7</button>
+      <button type="button" data-kd="8">8</button>
+      <button type="button" data-kd="9">9</button>
+      <button class="ok" type="button" data-kfn="ok" aria-label="Confirmar y seguir">✓</button>
+      <button type="button" data-kd="," id="kpComma" aria-label="Coma decimal">,</button>
+      <button type="button" data-kd="0">0</button>
+      <button type="button" data-kfn="del" aria-label="Borrar">⌫</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet"><div class="sheet-in">
+  <p class="lbl" id="shLbl">Detalle</p><h3 id="shTitle"></h3><p class="sub" id="shSub"></p>
+  <div id="shList"></div>
+  <button class="btn ghost" type="button" id="shClose" style="margin-top:14px">Cerrar</button></div></div>
+
+<div class="player" id="player">
+  <div class="top"><button class="ib" id="pQuit" type="button" aria-label="Salir">✕</button>
+    <div class="grow"><p class="lbl" id="pRoutine">Pilates</p></div>
+    <span class="mono" id="pCount" style="font-size:var(--fs-sm);color:var(--ink-3)">1/8</span></div>
+  <div class="pbar"><i id="pBar" style="width:0%"></i></div>
+  <div class="mid">
+    <p class="lbl" id="pPhase">Ejercicio</p>
+    <h2 id="pName">—</h2>
+    <p class="cue" id="pCue"></p>
+    <div class="bigclock" id="pClock">0:30</div>
+    <p class="next" id="pNext"></p>
+  </div>
+  <div class="pctrl">
+    <button class="btn ghost" id="pPrev" type="button">‹ Antes</button>
+    <button class="btn" id="pPlay" type="button">❚❚ Pausa</button>
+    <button class="btn ghost" id="pNextBtn" type="button">Salta ›</button></div>
+</div>
+
+<nav class="nav hidden" id="nav"><div class="nav-in">
+  <button type="button" data-go="v-dash" aria-current="page">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Panel</button>
+  <button type="button" data-go="v-work">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 8v8M18 8v8M3 10v4M21 10v4M6 12h12"/></svg>Entrenar</button>
+  <button type="button" data-go="v-create">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3v18M3 12h18"/></svg>Crear</button>
+  <button type="button" data-go="v-studio">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Estudio</button>
+  <button type="button" data-go="v-body">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="4.5" r="2"/><path d="M12 7v7M12 7L7 9M12 7l5 2M9.5 14L8 21M14.5 14L16 21"/></svg>Cuerpo</button>
+</div></nav>
+
+<!-- Pantalla de arranque: si el módulo no llega a ejecutarse (CDN caído, red
+     cortada), este aviso sustituye el vacío por algo que se entiende. -->
+<div class="gate" id="boot">
+  <div class="gate-in">
+    <p class="brand">Nexus</p>
+    <h1>Cargando…</h1>
+    <p class="lead" id="bootMsg">Un segundo.</p>
+  </div>
+</div>
+
+<script src="js/boot.js"></script>
+<script type="module" src="js/app.js"></script>

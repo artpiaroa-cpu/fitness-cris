@@ -1,0 +1,55 @@
+# ══════════════════════════════════════════════════════════════════════════
+# Netlify · app estática, sin paso de compilación
+# ══════════════════════════════════════════════════════════════════════════
+
+[build]
+  publish = "web"
+  # No hay bundler ni framework: se publica el directorio tal cual.
+  command = ""
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# ── Cabeceras de seguridad ────────────────────────────────────────────────
+# La CSP enumera exactamente los tres orígenes externos que la app necesita:
+#   esm.sh                → el módulo supabase-js v2
+#   *.supabase.co         → REST y autenticación (wss para realtime)
+#   raw.githubusercontent → los GIF del catálogo de ejercicios
+# script-src NO lleva 'unsafe-inline': no hay ni un manejador en línea ni un
+# <script> incrustado. style-src sí lo lleva porque la interfaz usa atributos
+# style="…" heredados del prototipo.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self' https://esm.sh; connect-src 'self' https://owhxwqktbkpiqrnqnkhn.supabase.co wss://owhxwqktbkpiqrnqnkhn.supabase.co https://esm.sh; img-src 'self' data: https://raw.githubusercontent.com; style-src 'self' 'unsafe-inline'; font-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; worker-src 'self'; manifest-src 'self'"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "no-referrer"
+    Cross-Origin-Opener-Policy = "same-origin"
+    Permissions-Policy = "camera=(), geolocation=(), payment=(), usb=(), microphone=(self)"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+
+# Los datos son grandes e inmutables mientras no se regeneren: caché larga
+# con revalidación para no descargar 1,8 MB en cada visita.
+[[headers]]
+  for = "/data/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, stale-while-revalidate=604800"
+
+[[headers]]
+  for = "/js/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/css/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# ── Rutas ─────────────────────────────────────────────────────────────────
+# La app es una sola página con vistas internas: cualquier ruta desconocida
+# devuelve index.html en lugar de un 404.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
