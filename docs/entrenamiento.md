@@ -206,6 +206,67 @@ se convierta en 244,99 lb y arrastre ese ruido a todos los porcentajes.
 
 ---
 
+## 6. Peso propuesto para el resto de ejercicios
+
+El 5/3/1 solo cubre cuatro levantamientos. Para los demás, la app propone el
+peso de cada serie con la operación inversa de la que usa para estimar el 1RM:
+
+```
+peso = 1RM del ejercicio × pct(n)      n = repeticiones + RIR
+pct(n) = ( 1/(1 + n/30)  +  (37 − n)/36 ) / 2
+          └─ Epley⁻¹ ─┘     └─ Brzycki⁻¹ ┘
+```
+
+Se promedian las dos fórmulas porque cada una se desvía hacia un lado, que es
+el mismo criterio con el que se estima el e1RM. Vive en `units.pctForReps()`.
+
+| n (reps + RIR) | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 10 | 12 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| % del 1RM | 100 | 95,5 | 92,7 | 90,0 | 87,3 | 84,7 | 79,8 | 75,0 | 70,4 |
+
+Dos acotaciones deliberadas:
+
+- **n ≤ 12.** Por encima, las dos fórmulas se separan tanto de la realidad que
+  el número deja de significar algo (Brzycki llega a cero en 37). Una serie
+  prescrita de 12-15 usa el porcentaje de 12.
+- **n = 1 → 100 %.** El peso que solo se levanta una vez *es* el 1RM. Brzycki
+  lo respeta; Epley está calibrado por encima de la repetición única y daría
+  96,8 %, así que el promedio crudo se quedaría en un 98,4 % sin sentido.
+
+Decisiones de aplicación, todas en `web/js/suggest.js`:
+
+- Se usa la parte **alta** del rango de repeticiones prescrito. Más
+  repeticiones significan menos porcentaje: la propuesta se queda corta antes
+  que pasarse, porque quedarse corto se arregla subiendo peso y pasarse se
+  arregla fallando la serie.
+- **Isométricos** (planchas) no llevan peso: lo que se prescribe son segundos.
+- **Peso corporal**: el 1RM que se guarda de unas dominadas suele ser el peso
+  *añadido*, no la carga total. Como no hay forma de distinguirlo, no se
+  propone nada y la interfaz dice «peso corporal».
+- El redondeo es el mismo de siempre: incremento cargable del sistema (5 lb /
+  2,5 kg), y en los cuatro básicos, además, nunca por debajo de la barra vacía.
+
+**Prioridad del peso que aparece en la sesión**, de más a menos:
+lo que ha escrito el usuario → el 5/3/1 en sus cuatro básicos → «la última
+vez» → el porcentaje del 1RM. El porcentaje solo rellena el hueco que antes
+quedaba vacío con un «Elige el peso».
+
+**El 1RM se aprende solo.** Al completar una serie de trabajo se estima el 1RM
+con las repeticiones más el RIR y, si supera al guardado, se actualiza con
+`source='calculado'`. Nunca baja, y nunca reescribe una fila puesta a mano
+(`source='manual'`). Así un ejercicio sin histórico se calibra tras su primera
+sesión.
+
+**La duplicidad de `lift_maxes`.** La columna `lift` es texto libre y conviven
+las claves de básico (`banca`) con los nombres del POOL (`Press de banca con
+barra`), que son el mismo levantamiento. La resolución es **primero por nombre
+de ejercicio y después por clave de básico**, y al guardar el máximo de un
+básico se **escriben las dos claves a la vez** para que no se desincronicen.
+El Training Max queda fuera de esa resolución: lo lee la ola por su clave y
+solo se mueve al cerrar un ciclo.
+
+---
+
 ## Fuentes
 
 - Schoenfeld, Grgic et al. — [*Effects of Resistance Training Frequency on Measures of Muscle Hypertrophy: A Systematic Review and Meta-Analysis*](https://www.researchgate.net/publication/301578131_Effects_of_Resistance_Training_Frequency_on_Measures_of_Muscle_Hypertrophy_A_Systematic_Review_and_Meta-Analysis) (2016)

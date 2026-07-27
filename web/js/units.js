@@ -148,3 +148,64 @@ export function e1rm(kg, reps) {
   if (w <= 0 || r <= 0) return null;
   return Math.round(w * (1 + r / 30) * 100) / 100;
 }
+
+/* ── Porcentaje del 1RM a partir de las repeticiones ─────────────────────
+   La operación inversa de la de arriba: si un 1RM sale de multiplicar el peso
+   de una serie por un factor, el peso de esa serie sale de multiplicar el 1RM
+   por el inverso de ese factor.
+
+   Se promedian las dos fórmulas clásicas, que es lo que hace la app para
+   estimar, porque cada una se desvía hacia un lado:
+
+     Epley⁻¹   = 1 / (1 + n/30)      · tira a la baja en repeticiones altas
+     Brzycki⁻¹ = (37 − n) / 36       · tira a la alta
+
+   `n` son las repeticiones HASTA EL FALLO: las prescritas más las que se dejan
+   en reserva (RIR). Una serie de 8 dejándose 2 pesa lo mismo que un 10 al
+   fallo, así que es ese 10 el que manda.
+
+   DOS ACOTACIONES, las dos deliberadas:
+
+   1. n ≤ 12. Por encima, las dos fórmulas se separan tanto de la realidad que
+      el número deja de significar nada (Brzycki llega a dar cero en 37). Para
+      una prescripción de 15-20 repeticiones se devuelve el porcentaje de 12,
+      que es el suelo de lo que estas fórmulas saben decir.
+   2. n = 1 → 100 %. Por definición, el peso que solo se levanta una vez ES el
+      1RM. Brzycki lo respeta (36/36 = 1), pero Epley no: su fórmula está
+      calibrada por encima de la repetición única y da 30/31 = 96,8 %, con lo
+      que el promedio se quedaría en un 98,4 % que no significa nada.        */
+
+/** Repeticiones máximas para las que las fórmulas siguen valiendo. */
+export const PCT_MAX_REPS = 12;
+
+/* Más allá de 12 repeticiones Epley y Brzycki dejan de ser fiables, pero
+   quedarse clavado en el 70 % del 12RM haría que un ejercicio de 15-20
+   repeticiones —elevaciones laterales, gemelos— empezara demasiado pesado.
+   Las tablas al uso sitúan el 15RM cerca del 65 % y el 20RM cerca del 60 %,
+   así que prolongamos con una pendiente suave de un punto por repetición y
+   un suelo del 55 %, que es donde la carga deja de ser el factor limitante. */
+const PCT_EXTRA_SLOPE = 0.01;
+const PCT_FLOOR = 0.55;
+
+/**
+ * Porcentaje del 1RM que corresponde a unas repeticiones objetivo.
+ * @param {number} reps repeticiones prescritas
+ * @param {number} rir  repeticiones en reserva (las que se dejan sin hacer)
+ * @returns {number} fracción entre 0 y 1 (0,85 = 85 % del 1RM)
+ */
+export function pctForReps(reps, rir) {
+  const total = Math.round((Number(reps) || 0) + Math.max(0, Number(rir) || 0));
+  const n = Math.max(1, total);
+  if (n <= 1) return 1;
+
+  const base = Math.min(PCT_MAX_REPS, n);
+  const epley = 1 / (1 + base / 30);
+  const brzycki = (37 - base) / 36;
+  let pct = (epley + brzycki) / 2;
+
+  if (n > PCT_MAX_REPS) {
+    pct = Math.max(PCT_FLOOR, pct - (n - PCT_MAX_REPS) * PCT_EXTRA_SLOPE);
+  }
+  /* Cuatro decimales: determinista y de sobra para redondear después a discos. */
+  return Math.round(pct * 10000) / 10000;
+}

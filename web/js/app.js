@@ -16,6 +16,7 @@ import * as db from './db.js';
 import * as U from './units.js';
 import * as C from './catalog.js';
 import * as S from './strength.js';
+import * as SG from './suggest.js';
 import {
   generateRoutine, alternatives, exercisesPerSession, LIMITATION_MAP,
   explainPlan, recommendStructure, weeklyVolume, volumeTarget,
@@ -831,15 +832,18 @@ async function saveMaxesFromDraft() {
     const e = maxE1rmKg(lift);
     if (!e) continue;
     const reps = Math.round(U.num(draft.maxes[lift].r) || 1);
-    await db.write('liftmax', {
+    /* Las dos claves del básico a la vez (clave de ola y nombre de ejercicio):
+       de este 1RM depende también el peso propuesto del ejercicio suelto. */
+    const keys = SG.liftKeys(S.LIFT_EXERCISE[lift]);
+    await db.write('liftmaxes', {
       profileId: profile.id,
-      lift,
+      keys,
       patch: {
         e1rm_kg: e,
         training_max_kg: S.tmFromE1rm(e, draft.units),
         source: reps > 1 ? 'calculado' : 'manual',
       },
-    }, `liftmax:${lift}`).catch(() => {});
+    }, `liftmax:${keys.join('|')}`).catch(() => {});
   }
   await loadStrength();
 }
@@ -1483,15 +1487,17 @@ function bindCreate() {
       const reps = Math.max(1, Math.min(15, Math.round(U.num(m.r || '1') || 1)));
       const e = U.e1rm(U.fromInput(m.w, units()), reps);
       if (!e) continue;
-      await db.write('liftmax', {
+      /* Las dos claves del básico a la vez: ver saveMaxesFromDraft. */
+      const keys = SG.liftKeys(S.LIFT_EXERCISE[l]);
+      await db.write('liftmaxes', {
         profileId: profile.id,
-        lift: l,
+        keys,
         patch: {
           e1rm_kg: e,
           training_max_kg: S.tmFromE1rm(e, units()),
           source: reps > 1 ? 'calculado' : 'manual',
         },
-      }, `liftmax:${l}`).catch(() => {});
+      }, `liftmax:${keys.join('|')}`).catch(() => {});
     }
     await loadStrength();
     renderProgram();
@@ -2151,17 +2157,73 @@ async function openSession(day) {
   buildSession();
 }
 
-/** Peso objetivo canónico de una serie, o null si no hay historial. */
+/* ══ Peso propuesto por porcentaje del 1RM ═══════════════════════════════
+   Vale para TODOS los ejercicios, no solo para los cuatro básicos de la ola.
+   La cuenta vive en suggest.js; aquí solo se decide con qué repeticiones se
+   pregunta y quién manda cuando hay varias fuentes.
+
+   PRIORIDAD DEL PESO DE UNA SERIE, de más a menos:
+     1. lo que haya escrito el usuario (o el autorrelleno de la serie anterior)
+     2. el 5/3/1, cuando el ejercicio es uno de sus cuatro básicos
+     3. "la última vez": la mejor serie de la última sesión de ese ejercicio
+     4. el porcentaje del 1RM, que es lo que rellena el hueco que quedaba
+   Los puntos 2-4 son los que resuelve `targetKg`; el 1 lo garantiza
+   `ensureSets`, que solo crea las series que faltan y nunca reescribe una
+   existente.                                                                */
+
+/**
+ * Repeticiones con las que se pide el porcentaje: la parte ALTA del rango
+ * prescrito. Es deliberadamente conservador — más repeticiones significan
+ * menos porcentaje, y quedarse corto en la primera serie se arregla subiendo
+ * peso, mientras que pasarse se arregla fallando.
+ */
+function suggestReps(i, s) {
+  const e = SESS.ex[i];
+  if (UI.mode === 'fuerza' && s === 0) return Math.max(3, Math.min(5, e.rep_high));
+  return e.rep_high;
+}
+
+/** Propuesta de peso de una serie de trabajo, o null si no procede. */
+function suggestFor(i, s) {
+  const e = SESS.ex[i];
+  /* Con la ola manda la ola: sus porcentajes van sobre el Training Max y no
+     sobre el 1RM, y mezclar las dos cuentas sería justo la confusión a evitar. */
+  if (!e || waveFor(i)) return null;
+  return SG.suggestWeight({
+    maxes: WAVE.maxes,
+    name: e.name,
+    equipment: e.equipment,
+    isTime: e.is_time,
+    reps: suggestReps(i, s),
+    rir: targetRir(i, s),
+    units: units(),
+  });
+}
+
+/** Peso objetivo canónico de una serie, o null si no hay de dónde sacarlo. */
 function targetKg(i, s) {
   const w = waveFor(i);
   if (w) return w.work[s] ? w.work[s].kg : null;
   const e = SESS.ex[i];
   const lb = lastBest[e.name];
-  if (!lb || lb.weight_kg == null || Number(lb.weight_kg) <= 0) return null;
-  let kg = Number(lb.weight_kg);
-  /* En modo fuerza la serie TOP sube un 15 % sobre la última referencia. */
-  if (UI.mode === 'fuerza' && s === 0) kg *= 1.15;
-  return roundKg(kg);
+  if (lb && lb.weight_kg != null && Number(lb.weight_kg) > 0) {
+    let kg = Number(lb.weight_kg);
+    /* En modo fuerza la serie TOP sube un 15 % sobre la última referencia. */
+    if (UI.mode === 'fuerza' && s === 0) kg *= 1.15;
+    return roundKg(kg);
+  }
+  const sg = suggestFor(i, s);
+  return sg && sg.kind === 'peso' ? sg.kg : null;
+}
+
+/** ¿El peso de esta serie sale del porcentaje del 1RM? (para etiquetarlo) */
+function pctSource(i, s) {
+  const e = SESS.ex[i];
+  if (!e || waveFor(i)) return null;
+  const lb = lastBest[e.name];
+  if (lb && lb.weight_kg != null && Number(lb.weight_kg) > 0) return null;
+  const sg = suggestFor(i, s);
+  return sg && sg.kind === 'peso' ? sg : null;
 }
 
 /** Redondea kg canónicos al paso natural del sistema del usuario. */
@@ -2456,7 +2518,12 @@ function autoMain(i, s) {
   }
   if (e.is_time) return `${targetReps(i, s)} s`;
   const t = targetKg(i, s);
-  if (t == null) return 'Elige el peso';
+  /* Sin peso que proponer: en peso corporal el que carga es el cuerpo, y en el
+     resto se dice claramente que la primera cifra la pone ella. */
+  if (t == null) {
+    const sg = suggestFor(i, s);
+    return sg && sg.kind === 'corporal' ? 'Peso corporal' : 'Elige el peso';
+  }
   return `${U.fmtNum(U.toDisplay(t, u), 1)} ${U.wLabel(u)} × ${repRange(i, s)}`;
 }
 
@@ -2471,6 +2538,10 @@ function autoSub(i, s) {
   if (e.is_time) return 'aguanta';
   const t = targetKg(i, s);
   if (t == null) return `${repRange(i, s)} · ${targetRir(i, s)} RIR`;
+  /* Cuando el peso sale de un porcentaje se dice de dónde: el número no cae
+     del cielo ni es "lo que hiciste la última vez". */
+  const sg = pctSource(i, s);
+  if (sg) return SG.suggestLabel(sg, units());
   return `${targetRir(i, s)} RIR`;
 }
 
@@ -2569,9 +2640,29 @@ function renderFocus() {
       ? '. Intenta aguantar 5 segundos más.'
       : `. Si te salen todas las repes fáciles, sube ${bump} ${U.wLabel(u)}.`}</p>`;
   } else {
-    hints += `<p class="hint warn"><b>Primera vez con este ejercicio.</b>
-      Empieza con un peso que puedas mover con técnica limpia y anótalo: la próxima
-      sesión ya tendrás referencia.</p>`;
+    /* Sin "última vez" el peso lo pone el porcentaje del 1RM. Se explica la
+       cuenta entera, porque un número que aparece solo en un campo editable
+       invita a hacerlo sin pensar. */
+    const sg = pctSource(i, 0);
+    const sgAny = suggestFor(i, 0);
+    if (sg) {
+      hints += `<p class="hint pr"><b>Peso propuesto:
+        ${U.fmtNum(sg.display, 1)} ${U.wLabel(u)}.</b> Es el
+        ${esc(pct(sg.pct))} de tu 1RM de ${esc(e.name.toLowerCase())}
+        (${esc(w2(sg.e1rmKg))}), que es lo que suele salir para
+        ${e.rep_high} repeticiones dejando ${targetRir(i, 0)} en reserva.
+        Va por lo bajo a propósito: si la primera serie sale fácil, sube
+        ${U.fmtNum(U.step(u), 1)} ${U.wLabel(u)}.</p>`;
+    } else if (sgAny && sgAny.kind === 'corporal') {
+      hints += `<p class="hint"><b>Este ejercicio va con tu peso corporal.</b>
+        Deja el peso en 0 si no añades lastre, y anótalo si te cuelgas un disco:
+        así el historial cuenta lo que de verdad has movido.</p>`;
+    } else {
+      hints += `<p class="hint warn"><b>Primera vez con este ejercicio.</b>
+        Empieza con un peso que puedas mover con técnica limpia y anótalo: la próxima
+        sesión ya tendrás referencia. Cuando lo registres, la app calculará tu 1RM
+        y las próximas sesiones ya vendrán con el peso propuesto.</p>`;
+    }
   }
   const pool = C.poolByName(e.name);
   if (pool && pool.c) hints += `<p class="hint"><b>Técnica:</b> ${esc(pool.c)}</p>`;
@@ -2744,7 +2835,7 @@ function bindSession() {
       updateSess();
       persistSet(k);
       spread.forEach((sk) => persistSet(sk));
-      if (st.done) await registerAmrap(i, s);
+      if (st.done) { await registerAmrap(i, s); await learnE1rm(i, s); }
     }
   });
 
@@ -2835,6 +2926,54 @@ async function registerAmrap(i, s) {
   }
   renderFocus();
   renderWave();
+  renderSettings();
+}
+
+/**
+ * Aprende el 1RM de CUALQUIER ejercicio al completar una serie de trabajo.
+ *
+ * Es lo que calibra solos los ejercicios sin histórico: la primera vez no hay
+ * peso que proponer, pero en cuanto se registra una serie ya hay un 1RM
+ * estimado y la sesión siguiente llega con su porcentaje puesto.
+ *
+ * Tres cosas que NO hace:
+ *   · no toca los básicos de una ola 5/3/1 (de eso se encarga `registerAmrap`,
+ *     que solo mira la AMRAP: es la serie que mide de verdad);
+ *   · no baja nunca un máximo, solo lo sube;
+ *   · no reescribe una fila puesta a mano (`source` = 'manual'). Si el usuario
+ *     dice que su máximo es otro, manda él.
+ * Cuando el ejercicio es uno de los cuatro básicos se escriben SUS DOS CLAVES
+ * (nombre y clave de la ola) para que no se desincronicen.
+ */
+async function learnE1rm(i, s) {
+  const e = SESS.ex[i];
+  if (!e || e.is_time || waveFor(i)) return;
+  const st = SESS.sets.get(key(i, s, false));
+  if (!st || !st.done) return;
+  if (!(Number(st.weight_kg) > 0) || !(Number(st.reps) > 0)) return;
+
+  const est = S.amrapE1rm(st.weight_kg, st.reps, st.rir);
+  if (!est) return;
+  const cur = SG.resolveE1rm(WAVE.maxes, e.name);
+  if (est <= (cur ? cur.kg : 0) + 0.01) return;
+
+  /* Una fila a mano se queda como está, aunque sea solo una de las dos. */
+  const keys = SG.liftKeys(e.name)
+    .filter((k) => ((WAVE.maxes[k] || {}).source || '') !== 'manual');
+  if (!keys.length) return;
+
+  /* El Training Max no se recalcula aquí: en el 5/3/1 solo se mueve al cerrar
+     una ola. Para un ejercicio nuevo se siembra al 90 %, que es la definición,
+     y así la fila queda completa desde el primer día. */
+  const tm = SG.resolveTm(WAVE.maxes, e.name) || S.tmFromE1rm(est, units());
+  const patch = { e1rm_kg: est, training_max_kg: tm, source: 'calculado' };
+  await db.write('liftmaxes', { profileId: profile.id, keys, patch },
+    `liftmax:${keys.join('|')}`).catch(() => {});
+  keys.forEach((k) => {
+    WAVE.maxes[k] = { ...(WAVE.maxes[k] || { lift: k }), ...patch };
+  });
+  waveCache.clear();
+  renderFocus();
   renderSettings();
 }
 
@@ -3498,84 +3637,147 @@ function renderPrefs() {
      · Training Max    · el 90 % de ese 1RM, la base de todos los porcentajes
      · peso de la serie· el porcentaje de la semana aplicado al TM
    Los dos primeros son editables a mano. Tocar el 1RM lo marca como
-   'manual', y a partir de ahí las AMRAP dejan de reescribirlo solas.       */
+   'manual', y a partir de ahí ni las AMRAP ni el aprendizaje automático lo
+   reescriben solos.
+
+   La lista NO son solo los cuatro básicos: sale TODO ejercicio con un 1RM
+   guardado, ordenado de más a menos peso, porque de ese 1RM depende ahora el
+   peso propuesto de todas sus series. Los básicos se distinguen en que además
+   llevan Training Max (lo necesita la ola) y en que se guardan en DOS claves a
+   la vez — 'banca' y 'Press de banca con barra' son el mismo levantamiento, y
+   escribir solo una las dejaría contando historias distintas.               */
 
 const SRC_TXT = { manual: 'puesto a mano', calculado: 'calculado de una serie', historico: 'de tu histórico' };
+
+/** Umbral a partir del cual la lista de máximos necesita buscador. */
+const SX_FIND_MIN = 15;
+
+/** Entradas pintadas en la pantalla, en el mismo orden que sus campos. */
+let strengthRows = [];
 
 function renderStrengthSet() {
   const box = $('setStrength');
   if (!box) return;
   const u = units();
   const c = WAVE.cycle;
+  const list = SG.strengthEntries(WAVE.maxes, S.LIFTS, S.LIFT_LABEL);
+  strengthRows = list;
+  const conDato = list.filter((x) => x.e1rmKg > 0).length;
+
+  const fila = (x, n) => {
+    const e = x.e1rmKg > 0 ? U.fmtNum(U.toDisplay(x.e1rmKg, u), 1) : '';
+    const tm = x.tmKg > 0 ? U.fmtNum(U.toDisplay(x.tmKg, u), 1) : '';
+    const origen = x.e1rmKg > 0
+      ? `1RM ${SRC_TXT[x.source] || (x.source ? esc(x.source) : 'guardado')}`
+      : 'Sin datos todavía';
+    const campo1RM = `<div><label class="f-lbl" for="sx-${n}-e">1RM estimado (${U.wLabel(u)})</label>
+      <input class="in mono" id="sx-${n}-e" type="text" inputmode="decimal"
+        value="${esc(e)}" placeholder="—"></div>`;
+    return `<div class="set-row" data-sx="${n}" data-find="${esc(x.label.toLowerCase())}"
+      style="flex-direction:column;align-items:stretch">
+      <div class="grow"><h4>${esc(x.label)}</h4>
+        <p id="sx-${n}-out">${origen}${x.basic ? ' · básico del 5/3/1' : ''}</p></div>
+      ${x.basic
+      ? `<div class="pair" style="margin-top:9px">${campo1RM}
+          <div><label class="f-lbl" for="sx-${n}-t">Training Max · 90 % (${U.wLabel(u)})</label>
+            <input class="in mono" id="sx-${n}-t" type="text" inputmode="decimal"
+              value="${esc(tm)}" placeholder="—"></div></div>`
+      : `<div style="margin-top:9px">${campo1RM}</div>`}
+    </div>`;
+  };
+
   box.innerHTML = `
     <p class="note" style="margin:0 0 12px">El <b>1RM estimado</b> es lo máximo que levantarías
-      una sola vez. El <b>Training Max</b> es un 90 % de ese número, deliberadamente por debajo:
-      sobre él se calculan los porcentajes para que las series pesadas sean repetibles y no un
-      test. Todo se guarda en kilos y se muestra en ${U.wLabel(u) === 'lb' ? 'libras' : 'kilos'}.</p>
+      una sola vez. De él sale el <b>peso propuesto</b> de cada serie: el porcentaje que
+      corresponde a las repeticiones que toquen. El <b>Training Max</b> es un 90 % del 1RM y solo
+      lo usan los cuatro básicos del 5/3/1, deliberadamente por debajo para que las series pesadas
+      sean repetibles y no un test. Todo se guarda en kilos y se muestra en
+      ${U.wLabel(u) === 'lb' ? 'libras' : 'kilos'}.</p>
     ${c ? `<div class="set-row"><div class="grow"><h4>Ola en curso</h4>
       <p>${esc(S.waveLabel(c.cycle_num, c.week))} · ${esc(weekLine(c.week))}</p></div></div>` : ''}
-    ${S.LIFTS.map((l) => {
-    const m = WAVE.maxes[l];
-    const e = m ? U.fmtNum(U.toDisplay(m.e1rm_kg, u), 1) : '';
-    const tm = m ? U.fmtNum(U.toDisplay(m.training_max_kg, u), 1) : '';
-    return `<div class="set-row" style="flex-direction:column;align-items:stretch">
-      <div class="grow"><h4>${esc(S.LIFT_LABEL[l])}</h4>
-        <p id="tm-${l}-out">${m ? `1RM ${SRC_TXT[m.source] || esc(m.source || '')}`
-      : 'Sin datos todavía'}</p></div>
-      <div class="pair" style="margin-top:9px">
-        <div><label class="f-lbl" for="tm-${l}-e">1RM estimado (${U.wLabel(u)})</label>
-          <input class="in mono" id="tm-${l}-e" data-tm="${l}|e1rm" type="text" inputmode="decimal"
-            value="${esc(e)}" placeholder="—"></div>
-        <div><label class="f-lbl" for="tm-${l}-t">Training Max · 90 % (${U.wLabel(u)})</label>
-          <input class="in mono" id="tm-${l}-t" data-tm="${l}|tm" type="text" inputmode="decimal"
-            value="${esc(tm)}" placeholder="—"></div>
-      </div></div>`;
-  }).join('')}
+    ${list.length > SX_FIND_MIN
+    ? `<div style="margin-bottom:11px">
+        <label class="f-lbl" for="sxFind">Buscar ejercicio</label>
+        <input class="in" id="sxFind" type="search" placeholder="Escribe para filtrar"
+          autocomplete="off" aria-controls="setStrength">
+        <p class="note" id="sxCount" role="status">${conDato} ejercicios con 1RM guardado
+          de ${list.length}.</p></div>`
+    : ''}
+    ${list.map(fila).join('')}
+    <p class="empty" id="sxVacio" style="display:none">Ningún ejercicio con ese nombre.</p>
     <div class="g2" style="margin-top:12px">
       <button class="btn ghost" id="tmRecalc" type="button">Recalcular TM = 90 % del 1RM</button>
       <button class="btn ghost" id="tmSave" type="button">Guardar máximos</button>
     </div>
     <p class="note" id="tmMsg">Los pesos de cada serie se redondean a lo que se puede montar de
       verdad: de ${U.fmtNum(U.step(u), 1)} en ${U.fmtNum(U.step(u), 1)} ${U.wLabel(u)} con barra de
-      ${U.fmtNum(U.barDisplay(u), 0)} ${U.wLabel(u)}.</p>`;
+      ${U.fmtNum(U.barDisplay(u), 0)} ${U.wLabel(u)}. Editar un 1RM lo marca como puesto a mano y la
+      app deja de recalcularlo sola.</p>`;
 }
 
-/** Lee los cuatro pares de campos de la pantalla Fuerza. */
+/** Filtra la lista de máximos por nombre, sin repintarla (no pierde el foco). */
+function filterStrength(text) {
+  const q = String(text || '').trim().toLowerCase();
+  let visibles = 0;
+  document.querySelectorAll('#setStrength [data-sx]').forEach((el) => {
+    const on = !q || (el.dataset.find || '').includes(q);
+    el.style.display = on ? '' : 'none';
+    if (on) visibles++;
+  });
+  const vacio = $('sxVacio');
+  if (vacio) vacio.style.display = visibles ? 'none' : '';
+  const count = $('sxCount');
+  if (count && q) count.textContent = `${visibles} de ${strengthRows.length} ejercicios.`;
+}
+
+/** Lee los campos de la pantalla Fuerza, uno por entrada pintada. */
 function readStrengthForm() {
   const u = units();
-  const out = {};
-  S.LIFTS.forEach((l) => {
-    const e = $(`tm-${l}-e`);
-    const t = $(`tm-${l}-t`);
-    out[l] = {
+  return strengthRows.map((entry, n) => {
+    const e = $(`sx-${n}-e`);
+    const t = $(`sx-${n}-t`);
+    return {
+      entry,
       e1rm: e ? U.fromInput(e.value, u) : 0,
       tm: t ? U.fromInput(t.value, u) : 0,
     };
   });
-  return out;
 }
 
 async function saveStrengthForm() {
   const msg = $('tmMsg');
   const form = readStrengthForm();
+  const u = units();
   msg.textContent = 'Guardando…';
-  for (const l of S.LIFTS) {
-    const v = form[l];
-    if (!(v.e1rm > 0) && !(v.tm > 0)) continue;
-    const prev = WAVE.maxes[l] || {};
-    const e1 = v.e1rm > 0 ? v.e1rm : Number(prev.e1rm_kg) || 0;
-    const tm = v.tm > 0 ? v.tm : S.tmFromE1rm(e1, units());
-    /* Editar el 1RM a mano lo blinda: las AMRAP ya no lo reescriben solas. */
-    const cambiado = Math.abs(e1 - (Number(prev.e1rm_kg) || 0)) > 0.01;
-    await db.write('liftmax', {
+  /* Los campos se pintan con UN decimal, así que leerlos y compararlos en kg
+     canónicos daría por cambiado lo que solo ha perdido precisión al pintarse
+     (132,132 kg se pinta como 291,3 lb y vuelve como 132,17 kg). La
+     comparación se hace en las unidades que ve el usuario y con la tolerancia
+     de ese decimal; si no, cada guardado marcaría a mano las veinte filas. */
+  const igual = (a, b) => Math.abs(U.toDisplay(a, u) - U.toDisplay(b, u)) < 0.06;
+  let n = 0;
+  for (const f of form) {
+    const x = f.entry;
+    if (!(f.e1rm > 0) && !(f.tm > 0)) continue;
+    const e1 = f.e1rm > 0 ? f.e1rm : x.e1rmKg;
+    /* Solo se escribe lo que ha cambiado: con la lista completa de ejercicios,
+       reescribir las veinte filas en cada guardado sería ruido. */
+    const e1Cambiado = !igual(e1, x.e1rmKg);
+    const tmCambiado = f.tm > 0 && !igual(f.tm, x.tmKg);
+    if (!e1Cambiado && !tmCambiado) continue;
+    const tm = f.tm > 0 ? f.tm : (x.tmKg || S.tmFromE1rm(e1, units()));
+    await db.write('liftmaxes', {
       profileId: profile.id,
-      lift: l,
+      keys: x.keys,
       patch: {
         e1rm_kg: e1,
         training_max_kg: tm,
-        source: cambiado ? 'manual' : (prev.source || 'manual'),
+        /* Editar el 1RM a mano lo blinda: ni las AMRAP ni el aprendizaje
+           automático vuelven a reescribirlo. */
+        source: e1Cambiado ? 'manual' : (x.source || 'manual'),
       },
-    }, `liftmax:${l}`).catch(() => {});
+    }, `liftmax:${x.keys.join('|')}`).catch(() => {});
+    n++;
   }
   await loadStrength();
   waveCache.clear();
@@ -3583,7 +3785,9 @@ async function saveStrengthForm() {
   renderWave();
   renderProgram();
   if (SESS.day && SESS.ex.length) buildSession();
-  $('tmMsg').textContent = 'Máximos guardados.';
+  $('tmMsg').textContent = n
+    ? `${n} ${n === 1 ? 'máximo guardado' : 'máximos guardados'}.`
+    : 'No había ningún cambio que guardar.';
 }
 
 function bindSettings() {
@@ -3637,15 +3841,19 @@ function bindSettings() {
     if (!b) return;
     if (b.id === 'tmSave') { await saveStrengthForm(); return; }
     if (b.id !== 'tmRecalc') return;
-    /* Recalcula el TM al 90 % del 1RM que haya escrito en pantalla. */
+    /* Recalcula el TM al 90 % del 1RM que haya escrito en pantalla. Solo lo
+       tienen los cuatro básicos: es el número sobre el que corre la ola. */
     const u = units();
-    const form = readStrengthForm();
-    S.LIFTS.forEach((l) => {
-      if (!(form[l].e1rm > 0)) return;
-      const t = $(`tm-${l}-t`);
-      if (t) t.value = U.fmtNum(U.toDisplay(S.tmFromE1rm(form[l].e1rm, u), u), 1);
+    readStrengthForm().forEach((f, n) => {
+      if (!f.entry.basic || !(f.e1rm > 0)) return;
+      const t = $(`sx-${n}-t`);
+      if (t) t.value = U.fmtNum(U.toDisplay(S.tmFromE1rm(f.e1rm, u), u), 1);
     });
     $('tmMsg').textContent = 'Training Max recalculado al 90 %. Pulsa Guardar máximos para aplicarlo.';
+  });
+  /* Buscador de la lista de máximos (solo existe si la lista es larga). */
+  $('setStrength').addEventListener('input', (ev) => {
+    if (ev.target && ev.target.id === 'sxFind') filterStrength(ev.target.value);
   });
   $('pwSave').addEventListener('click', changePassword);
   $('signOut').addEventListener('click', async () => {

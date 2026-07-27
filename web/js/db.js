@@ -436,6 +436,28 @@ export async function saveLiftMax(profileId, lift, patch) {
   if (error) throw error;
 }
 
+/**
+ * El mismo máximo escrito en VARIAS claves de `lift`, en una sola operación.
+ *
+ * Existe por la duplicidad de la tabla: 'banca' y 'Press de banca con barra'
+ * son el mismo levantamiento y hoy conviven como dos filas. Al guardar el
+ * máximo de un básico se escriben las dos a la vez para que no se
+ * desincronicen (la explicación completa está en suggest.js). Sigue siendo un
+ * upsert por (perfil, lift): reintentarlo desde la cola reescribe las mismas
+ * filas en vez de duplicarlas.
+ */
+export async function saveLiftMaxKeys(profileId, keys, patch) {
+  const list = (keys || []).filter(Boolean);
+  if (!list.length) return;
+  const now = new Date().toISOString();
+  const rows = list.map((lift) => ({
+    profile_id: profileId, lift, ...patch, updated_at: now,
+  }));
+  const { error } = await supabase.from('lift_maxes')
+    .upsert(rows, { onConflict: 'profile_id,lift' });
+  if (error) throw error;
+}
+
 /** Ola activa del perfil, o null si todavía no hay ninguna. */
 export async function getActiveCycle(profileId) {
   const { data, error } = await supabase.from('strength_cycles')
@@ -510,6 +532,7 @@ const HANDLERS = {
   /* El máximo de un levantamiento es un upsert por (perfil, lift): reintentarlo
      desde la cola reescribe la misma fila en vez de duplicarla. */
   liftmax: (p) => saveLiftMax(p.profileId, p.lift, p.patch),
+  liftmaxes: (p) => saveLiftMaxKeys(p.profileId, p.keys, p.patch),
   cycle: (p) => updateCycle(p.cycleId, p.patch),
 };
 
