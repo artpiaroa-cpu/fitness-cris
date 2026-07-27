@@ -142,6 +142,70 @@ estímulo necesario es más bajo y la técnica pesa más que el volumen.
 
 ---
 
+## 5. Fuerza por porcentajes: la ola 5/3/1
+
+Cuando el objetivo es fuerza, la app **ofrece** (no impone) una plantilla de
+cuatro días torso/pierna en la que los cuatro básicos van por porcentajes.
+Vive en `web/js/strength.js`.
+
+### Por qué sobre el Training Max y no sobre el 1RM
+
+El **Training Max (TM) es el 90 % del 1RM estimado**. Los porcentajes se
+calculan sobre él, no sobre el 1RM. El motivo es práctico: un programa que
+prescribe el 95 % del máximo real convierte cada semana en un test, y basta
+una mala noche para fallar la serie. Con el TM al 90 %, la serie pesada sigue
+siendo pesada pero **repetible semana tras semana**.
+
+Son tres números distintos y en la interfaz van siempre con su nombre entero,
+porque confundirlos es el error típico:
+
+| Número | Qué es | Ejemplo (banca de Cris) |
+| --- | --- | --- |
+| 1RM estimado | lo máximo que levantaría una vez | 272 lb |
+| Training Max | el 90 % de ese 1RM | 245 lb |
+| Peso de la serie | el porcentaje de la semana sobre el TM | 90 % → 220 lb |
+
+### Las cuatro semanas
+
+| Semana | Nombre | Series de trabajo |
+| --- | --- | --- |
+| 1 | 5s | 65 % ×5 · 75 % ×5 · **85 % ×5+** |
+| 2 | 3s | 70 % ×3 · 80 % ×3 · **90 % ×3+** |
+| 3 | 5/3/1 | 75 % ×5 · 85 % ×3 · **95 % ×1+** |
+| 4 | descarga | 40 % ×5 · 50 % ×5 · 60 % ×5 |
+
+El `+` es una serie **AMRAP**: todas las repeticiones que salgan con técnica
+limpia. Es la única medida real de cómo va el programa. La semana 4 no lleva
+AMRAP: si la descarga se hace al límite, deja de ser descarga.
+
+- **Calentamiento**: 40 % ×5 · 50 % ×5 · 60 % ×3 antes de las de trabajo. En la
+  semana de descarga no se añade, porque las propias series de trabajo son esa
+  misma rampa.
+- **Respaldo**: tras la AMRAP, 2 series al porcentaje más bajo de la semana.
+  Acumulan volumen de calidad sin volver a acercarse al fallo.
+
+### Progresión y reajuste
+
+- Al cerrar la semana 4, la ola avanza: `cycle_num +1`, vuelta a la semana 1 y
+  el TM sube **5 lb (2,5 kg) en banca y militar** y **10 lb (5 kg) en sentadilla
+  y peso muerto**. El tren inferior progresa al doble de ritmo porque parte de
+  cargas mayores y tolera más incremento absoluto.
+- **Regla de reajuste**: si la AMRAP del 95 % de la semana 3 sale con **menos de
+  3 repeticiones**, el TM va por delante de la fuerza real. La app **propone**
+  bajarlo un 10 % y explica por qué; no lo aplica sin confirmación.
+- Cada AMRAP registrada estima un 1RM (Epley, contando reps + RIR) y actualiza
+  `lift_maxes.e1rm_kg` si supera al anterior, marcándolo `source='calculado'`.
+  Un 1RM editado a mano queda como `'manual'` y ya no se reescribe solo.
+
+### Redondeo
+
+Los pesos se redondean al incremento cargable del sistema del usuario: **5 lb
+con barra de 45 lb** y **2,5 kg con barra de 20 kg**, que es lo que dan dos
+discos de 2,5 lb o de 1,25 kg. El TM se redondea primero, para que 111,13 kg no
+se convierta en 244,99 lb y arrastre ese ruido a todos los porcentajes.
+
+---
+
 ## Fuentes
 
 - Schoenfeld, Grgic et al. — [*Effects of Resistance Training Frequency on Measures of Muscle Hypertrophy: A Systematic Review and Meta-Analysis*](https://www.researchgate.net/publication/301578131_Effects_of_Resistance_Training_Frequency_on_Measures_of_Muscle_Hypertrophy_A_Systematic_Review_and_Meta-Analysis) (2016)

@@ -1122,6 +1122,16 @@ function todayDay() {
 const DOW = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 
 function bindWork() {
+  $('waveBox').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    b.disabled = true;
+    try {
+      if (b.dataset.wave) await moveWave(b.dataset.wave);
+      else if (b.dataset.drop) await applyDrop(b.dataset.drop, true);
+      else if (b.dataset.keep) await applyDrop(b.dataset.keep, false);
+    } finally { b.disabled = false; }
+  });
   $('days').addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-day]');
     if (!b) return;
@@ -1166,6 +1176,8 @@ function renderWork() {
     $('days').innerHTML = '';
     $('wlist').innerHTML = `<div class="p"><p class="empty"><b>Todavía no hay rutina.</b>
       Ve a Crear y genérala en un toque: usa tus días, tus minutos y tu equipo.</p></div>`;
+    $('waveBox').innerHTML = '';
+    $('volBox').innerHTML = '';
     return;
   }
   $('workLbl').textContent = `${routine.name} · ${routine.weeks} semanas`;
@@ -1204,6 +1216,127 @@ function renderWork() {
       ${d.is_rest ? '' : `<span class="box"><svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg></span>`}
       </button>`;
   }).join('');
+
+  renderWave();
+  renderVolBox();
+}
+
+/** Auditoría del reparto: series semanales por músculo de la rutina activa. */
+function renderVolBox() {
+  const box = $('volBox');
+  if (!box) return;
+  if (!routine) { box.innerHTML = ''; return; }
+  const target = volumeTarget(profile.level, profile.volume_pref);
+  box.innerHTML = volumeHtml(routine.routine_days, target);
+}
+
+/* ══ Estado de la ola de fuerza ══════════════════════════════════════════ */
+
+/** Línea "65 % ×5 · 75 % ×5 · 85 % ×5+" de una semana. */
+function weekLine(week) {
+  const w = S.WEEKS[week] || S.WEEKS[1];
+  return w.sets.map((s) => `${pct(s.pct)} ×${s.reps}${s.amrap ? '+' : ''}`).join(' · ');
+}
+
+function renderWave() {
+  const box = $('waveBox');
+  if (!box) return;
+  if (!S.is531(routine) || !WAVE.cycle) { box.innerHTML = ''; return; }
+  const c = WAVE.cycle;
+  const week = Number(c.week) || 1;
+  const drops = S.LIFTS.filter((l) => UI.tmDrop[l] && WAVE.maxes[l]);
+
+  const lifts = S.LIFTS.filter((l) => WAVE.maxes[l] && Number(WAVE.maxes[l].training_max_kg) > 0)
+    .map((l) => {
+      const plan = S.wavePlan(WAVE.maxes[l].training_max_kg, week, units());
+      const cargas = plan.work.filter((s) => s.kind === 'trabajo')
+        .map((s) => `${U.fmtNum(s.display, 1)}${s.amrap ? '+' : ''}`).join(' · ');
+      return `<div class="mrow"><div class="grow"><h4>${esc(S.LIFT_LABEL[l])}</h4>
+        <p>TM ${U.fmtNum(plan.tm, 1)} ${U.wLabel(units())} · ${esc(cargas)} ${U.wLabel(units())}</p>
+        </div></div>`;
+    }).join('');
+
+  box.innerHTML = `<div class="panel p" style="margin-top:13px">
+    <p class="lbl">Fuerza por porcentajes</p>
+    <h3 style="margin:4px 0 2px;font-size:var(--fs-lg);font-weight:800">${esc(S.waveLabel(c.cycle_num, week))}</h3>
+    <p class="note" style="margin:2px 0 0">${esc(weekLine(week))} sobre el Training Max.
+      ${week === 4 ? 'Semana de descarga: sin series al límite.'
+    : 'La última serie es AMRAP: haz todas las que puedas con técnica limpia.'}</p>
+    <div style="margin-top:10px">${lifts}</div>
+    ${week < 4
+    ? `<button class="btn ghost" type="button" data-wave="next" style="margin-top:12px">
+        Pasar a la semana ${week + 1} · ${esc(S.weekName(week + 1))}</button>`
+    : `<button class="btn" type="button" data-wave="close" style="margin-top:12px">
+        Cerrar la ola y subir el Training Max</button>
+      <p class="note">Empezará la ola ${(Number(c.cycle_num) || 1) + 1} en la semana 1. El TM sube
+        ${U.fmtNum(S.TM_INC.banca[units()], 1)} ${U.wLabel(units())} en banca y militar y
+        ${U.fmtNum(S.TM_INC.sentadilla[units()], 1)} ${U.wLabel(units())} en sentadilla y peso muerto.</p>`}
+    ${drops.map((l) => `<p class="hint warn"><b>${esc(S.LIFT_LABEL[l])}: el Training Max parece alto.</b>
+      En la semana 3 hiciste menos de ${S.RESET_REPS} repeticiones al 95 %, así que ese 95 % ya está
+      casi en tu máximo real. Lo habitual es bajar el TM un 10 %
+      (de ${esc(w2(WAVE.maxes[l].training_max_kg))} a ${esc(w2(S.dropTm(WAVE.maxes[l].training_max_kg, units())))})
+      y volver a subir desde ahí.</p>
+      <div class="mini"><button type="button" data-drop="${l}">Bajarlo un 10 %</button>
+      <button type="button" data-keep="${l}">Dejarlo como está</button></div>`).join('')}
+  </div>`;
+}
+
+/** Avanza de semana o cierra la ola subiendo los cuatro Training Max. */
+async function moveWave(action) {
+  if (!WAVE.cycle) return;
+  const c = WAVE.cycle;
+  const week = Number(c.week) || 1;
+  if (action === 'next' && week < 4) {
+    const patch = { week: week + 1 };
+    try {
+      WAVE.cycle = await db.updateCycle(c.id, patch);
+    } catch {
+      await db.write('cycle', { cycleId: c.id, patch }, `cycle:${c.id}`).catch(() => {});
+      WAVE.cycle = { ...c, ...patch };
+    }
+    renderWave();
+    return;
+  }
+  if (action !== 'close') return;
+  /* Cerrar la ola: los cuatro TM suben y se vuelve a la semana 1. */
+  for (const l of S.LIFTS) {
+    const m = WAVE.maxes[l];
+    if (!m || !Number(m.training_max_kg)) continue;
+    const next = S.nextTm(m.training_max_kg, l, units());
+    await db.write('liftmax', {
+      profileId: profile.id, lift: l, patch: { training_max_kg: next, source: m.source || 'manual' },
+    }, `liftmax:${l}`).catch(() => {});
+  }
+  const patch = { week: 1, cycle_num: (Number(c.cycle_num) || 1) + 1 };
+  try {
+    WAVE.cycle = await db.updateCycle(c.id, patch);
+  } catch {
+    await db.write('cycle', { cycleId: c.id, patch }, `cycle:${c.id}`).catch(() => {});
+    WAVE.cycle = { ...c, ...patch };
+  }
+  UI.tmDrop = {};
+  saveUI();
+  await loadStrength();
+  renderWave();
+  renderSettings();
+}
+
+/** Aplica (o descarta) la bajada del 10 % propuesta para un levantamiento. */
+async function applyDrop(lift, apply) {
+  const m = WAVE.maxes[lift];
+  if (m && apply) {
+    await db.write('liftmax', {
+      profileId: profile.id,
+      lift,
+      patch: { training_max_kg: S.dropTm(m.training_max_kg, units()), source: 'calculado' },
+    }, `liftmax:${lift}`).catch(() => {});
+    await loadStrength();
+  }
+  delete UI.tmDrop[lift];
+  saveUI();
+  renderWave();
+  renderSettings();
+  if (SESS.day && SESS.ex.length) { buildSession(); }
 }
 
 function openToday() {
@@ -1276,15 +1409,16 @@ function renderProgram() {
         <p class="note" style="margin-top:6px">Sin los cuatro máximos no se pueden calcular los
           porcentajes. Pon tu mejor serie reciente de cada levantamiento (peso y repeticiones)
           o tu máximo con 1 repetición.</p>
-        ${S.LIFTS.map((l) => `<div class="field"><div class="grow"><h4>${esc(S.LIFT_LABEL[l])}</h4>
+        ${S.LIFTS.map((l) => `<div class="set-row" style="flex-direction:column;align-items:stretch">
+          <div class="grow"><h4>${esc(S.LIFT_LABEL[l])}</h4>
           <p id="cm-${l}-out">${esc(createMaxLine(l))}</p></div>
-          <div class="pair" style="width:150px;flex:none">
-            <input class="in mono" data-cmax="${l}|w" type="text" inputmode="decimal"
-              aria-label="Peso de ${esc(S.LIFT_LABEL[l])} en ${U.wLabel(u)}"
-              value="${esc((CREATE.maxes[l] || {}).w || '')}" placeholder="${u === 'lb' ? '225' : '100'}">
-            <input class="in mono" data-cmax="${l}|r" type="text" inputmode="numeric"
-              aria-label="Repeticiones de ${esc(S.LIFT_LABEL[l])}"
-              value="${esc((CREATE.maxes[l] || {}).r || '1')}" placeholder="1">
+          <div class="pair" style="margin-top:8px">
+            <div><label class="f-lbl" for="cm-${l}-w">Peso (${U.wLabel(u)})</label>
+              <input class="in mono" id="cm-${l}-w" data-cmax="${l}|w" type="text" inputmode="decimal"
+                value="${esc((CREATE.maxes[l] || {}).w || '')}" placeholder="${u === 'lb' ? '225' : '100'}"></div>
+            <div><label class="f-lbl" for="cm-${l}-r">Repeticiones</label>
+              <input class="in mono" id="cm-${l}-r" data-cmax="${l}|r" type="text" inputmode="numeric"
+                value="${esc((CREATE.maxes[l] || {}).r || '1')}" placeholder="1"></div>
           </div></div>`).join('')}
         <button class="btn ghost" id="saveMax" type="button" style="margin-top:11px">Guardar máximos</button>
         <p class="note" id="maxMsg"></p></div>`
@@ -1465,8 +1599,10 @@ function volumeHtml(days, target, titulo) {
   return `<h2 class="sec">${esc(titulo || 'Series por músculo y semana')}</h2>
     <div class="panel p">
       <p class="note" style="margin:0 0 8px">Rango objetivo por tu nivel y tu nivel de exigencia:
-        <b>${target.low}-${target.high} series</b> por músculo y semana. Las series de
-        calentamiento no cuentan.</p>
+        <b>${target.low}-${target.high} series</b> por músculo y semana. Cuentan las series
+        directas más media serie por cada trabajo indirecto; las de calentamiento no cuentan.
+        ${S.is531(routine) ? 'En un programa de fuerza es normal quedarse por debajo de este '
+    + 'rango: es un rango pensado para hipertrofia y aquí sirve solo de referencia.' : ''}</p>
       ${rows.map((r) => {
     const p = Math.min(100, Math.round(r.sets / Math.max(1, target.high) * 100));
     const cls = r.state === 'alto' ? 'hi' : r.state === 'bajo' ? 'lo' : '';
@@ -1907,6 +2043,50 @@ const SESS = {
 
 const key = (i, s, warm) => `${warm ? 'w' : ''}${i}:${s}`;
 
+/* ══ La ola de fuerza dentro de la sesión ════════════════════════════════
+   Si la rutina activa es un 5/3/1, el ejercicio PRINCIPAL de cada día no se
+   rige por el historial sino por un porcentaje del Training Max de la semana
+   en curso. Se recalcula al abrir la sesión, no se guarda en la rutina: así
+   cambiar de semana no obliga a reescribir nada.
+   Los accesorios no pasan por aquí: son series normales.                    */
+
+const waveCache = new Map();
+
+function waveOf(name) {
+  if (!S.is531(routine) || !WAVE.cycle) return null;
+  const lift = S.liftForExercise(name);
+  if (!lift) return null;
+  const m = WAVE.maxes[lift];
+  if (!m || !(Number(m.training_max_kg) > 0)) return null;
+  const k = `${WAVE.cycle.id}|${WAVE.cycle.week}|${units()}|${lift}|${m.training_max_kg}`;
+  if (waveCache.has(k)) return waveCache.get(k);
+  const out = {
+    lift,
+    cycle: Number(WAVE.cycle.cycle_num) || 1,
+    ...S.wavePlan(m.training_max_kg, WAVE.cycle.week, units()),
+  };
+  waveCache.set(k, out);
+  return out;
+}
+
+function waveFor(i) {
+  const e = SESS.ex[i];
+  return e ? waveOf(e.name) : null;
+}
+
+/**
+ * Series de trabajo de un ejercicio. La ola manda cuando la hay, porque su
+ * número de series cambia con la semana: 3 de trabajo + 2 de respaldo en las
+ * semanas 1-3, y solo 3 en la descarga (que no lleva AMRAP y por tanto
+ * tampoco respaldo).
+ */
+function nSets(i) {
+  const w = waveFor(i);
+  if (w) return w.work.length;
+  const e = SESS.ex[i];
+  return e ? e.sets : 0;
+}
+
 async function openSession(day) {
   SESS.day = day;
   SESS.ex = (day.routine_exercises || []).slice();
@@ -1921,7 +2101,9 @@ async function openSession(day) {
   saveUI();
 
   $('sName').textContent = day.name;
-  $('sMode').textContent = UI.mode === 'fuerza' ? 'Fuerza · top set' : 'Hipertrofia';
+  $('sMode').textContent = S.is531(routine) && WAVE.cycle
+    ? S.waveLabel(WAVE.cycle.cycle_num, WAVE.cycle.week)
+    : (UI.mode === 'fuerza' ? 'Fuerza · top set' : 'Hipertrofia');
   $('startBox').style.display = 'block';
   $('liveBar').style.display = 'none';
   $('finish').style.display = 'none';
@@ -1953,7 +2135,9 @@ async function openSession(day) {
       rows.forEach((r) => {
         const i = SESS.ex.findIndex((x) => x.name === r.exercise);
         if (i < 0) return;
-        SESS.sets.set(key(i, r.set_index, r.is_warmup), r);
+        /* Lo que ya estaba guardado se considera escrito por el usuario: el
+           autorrelleno no debe pisarlo al reanudar. */
+        SESS.sets.set(key(i, r.set_index, r.is_warmup), { ...r, touched: true });
       });
       if (rows.length) {
         $('startBox').style.display = 'none';
@@ -1969,6 +2153,8 @@ async function openSession(day) {
 
 /** Peso objetivo canónico de una serie, o null si no hay historial. */
 function targetKg(i, s) {
+  const w = waveFor(i);
+  if (w) return w.work[s] ? w.work[s].kg : null;
   const e = SESS.ex[i];
   const lb = lastBest[e.name];
   if (!lb || lb.weight_kg == null || Number(lb.weight_kg) <= 0) return null;
@@ -1986,6 +2172,8 @@ function roundKg(kg) {
 }
 
 function targetReps(i, s) {
+  const w = waveFor(i);
+  if (w) return w.work[s] ? w.work[s].reps : 1;
   const e = SESS.ex[i];
   if (e.is_time) return e.rep_low;
   if (UI.mode === 'fuerza' && s === 0) return Math.max(3, Math.min(5, e.rep_low));
@@ -1993,12 +2181,18 @@ function targetReps(i, s) {
 }
 
 function targetRir(i, s) {
+  const w = waveFor(i);
+  /* En una AMRAP se va a por todas; en el resto de series de porcentaje se
+     deja siempre algo en el depósito, que es la gracia del Training Max. */
+  if (w) return w.work[s] && w.work[s].amrap ? 0 : 1;
   const e = SESS.ex[i];
   if (UI.mode === 'fuerza' && s === 0) return 1;
   return e.rir;
 }
 
 function repRange(i, s) {
+  const w = waveFor(i);
+  if (w && w.work[s]) return `${w.work[s].reps}${w.work[s].amrap ? '+' : ''}`;
   const e = SESS.ex[i];
   if (e.is_time) return `${e.rep_low}-${e.rep_high} s`;
   if (UI.mode === 'fuerza' && s === 0) return '3-5';
@@ -2007,6 +2201,10 @@ function repRange(i, s) {
 
 /** Calentamientos en modo fuerza: barra, 50 % y 75 % del objetivo. */
 function warmups(i) {
+  /* Con la ola, el calentamiento también va por porcentajes del TM: 40, 50 y
+     60 %, que es la rampa estándar del 5/3/1. */
+  const w = waveFor(i);
+  if (w) return w.warm.map((x) => ({ kg: x.kg, reps: x.reps, pct: x.pct }));
   const e = SESS.ex[i];
   if (UI.mode !== 'fuerza' || e.is_time || e.equipment !== 'libre') return [];
   const top = targetKg(i, 0);
@@ -2023,10 +2221,16 @@ function warmups(i) {
 
 const warmOn = (i) => UI.warmOpen[i] !== false;
 
-/** Crea en memoria las filas de las series que falten. */
+/**
+ * Crea en memoria las filas de las series que falten.
+ *
+ * `touched` marca las series que ha tocado el usuario. No viaja a la base: es
+ * lo que permite que el autorrelleno proponga sin pisar lo escrito a mano.
+ */
 function ensureSets(i) {
   const e = SESS.ex[i];
-  for (let s = 0; s < e.sets; s++) {
+  const total = nSets(i);
+  for (let s = 0; s < total; s++) {
     const k = key(i, s, false);
     if (!SESS.sets.has(k)) {
       const t = targetKg(i, s);
@@ -2035,7 +2239,7 @@ function ensureSets(i) {
         weight_kg: t == null ? 0 : t,
         reps: e.is_time ? null : targetReps(i, s),
         seconds: e.is_time ? targetReps(i, s) : null,
-        rir: null, done: false,
+        rir: null, done: false, touched: false,
       });
     }
   }
@@ -2044,16 +2248,44 @@ function ensureSets(i) {
     if (!SESS.sets.has(k)) {
       SESS.sets.set(k, {
         id: uuid(), session_id: null, exercise: e.name, set_index: wi, is_warmup: true,
-        weight_kg: w.kg, reps: w.reps, seconds: null, rir: null, done: false,
+        weight_kg: w.kg, reps: w.reps, seconds: null, rir: null, done: false, touched: false,
       });
     }
   });
 }
 
+/**
+ * Copia lo que acaba de registrarse en una serie a las SIGUIENTES series del
+ * mismo ejercicio.
+ *
+ * Es una propuesta, no un bloqueo: solo toca series que el usuario no haya
+ * editado (`touched`) ni marcado como hechas, y no las marca como hechas —
+ * rellenar no es completar. Los básicos de la ola 5/3/1 se quedan fuera: ahí
+ * cada serie tiene su propio porcentaje y copiar sería un error.
+ * @returns {string[]} claves de las series que han cambiado, para persistirlas
+ */
+function autofillFrom(i, s) {
+  if (waveFor(i)) return [];
+  const src = SESS.sets.get(key(i, s, false));
+  if (!src) return [];
+  const total = nSets(i);
+  const changed = [];
+  for (let n = s + 1; n < total; n++) {
+    const k = key(i, n, false);
+    const st = SESS.sets.get(k);
+    if (!st || st.touched || st.done) continue;
+    st.weight_kg = src.weight_kg;
+    if (SESS.ex[i].is_time) st.seconds = src.seconds; else st.reps = src.reps;
+    st.rir = src.rir;
+    changed.push(k);
+  }
+  return changed;
+}
+
 function setsDone(i) {
-  const e = SESS.ex[i];
   let n = 0;
-  for (let s = 0; s < e.sets; s++) {
+  const total = nSets(i);
+  for (let s = 0; s < total; s++) {
     const st = SESS.sets.get(key(i, s, false));
     if (st && st.done) n++;
   }
@@ -2061,12 +2293,12 @@ function setsDone(i) {
 }
 
 function firstOpen(i) {
-  const e = SESS.ex[i];
-  for (let s = 0; s < e.sets; s++) {
+  const total = nSets(i);
+  for (let s = 0; s < total; s++) {
     const st = SESS.sets.get(key(i, s, false));
     if (!st || !st.done) return s + 1;
   }
-  return e.sets;
+  return total;
 }
 
 /* ── Tira de miniaturas con GIF ── */
@@ -2076,11 +2308,12 @@ function renderStrip() {
   const host = $('strip');
   host.innerHTML = SESS.ex.map((e, i) => {
     const d = setsDone(i);
-    const pct = e.sets ? Math.round(d / e.sets * 100) : 0;
+    const tot = nSets(i);
+    const p = tot ? Math.round(d / tot * 100) : 0;
     return `<button class="tw" type="button" data-tile="${i}" aria-current="${i === UI.exIdx}"
-      aria-label="${esc(e.name)}, ${d} de ${e.sets} series">
+      aria-label="${esc(e.name)}, ${d} de ${tot} series">
       ${gifHtml(e.name, 'tile')}
-      <span class="tp"><i style="width:${pct}%"></i></span></button>`;
+      <span class="tp"><i style="width:${p}%"></i></span></button>`;
   }).join('') + '<span class="tw add" aria-hidden="true"><span class="tile">+</span><span class="tp"></span></span>';
   bindGifs(host);
   if (stripAt !== UI.exIdx) {
@@ -2124,8 +2357,32 @@ function e1Html(i) {
   const e = SESS.ex[i];
   if (e.is_time) return 'sin e1RM';
   const u = units();
+
+  /* En un básico de la ola, la píldora muestra el 1RM ESTIMADO DEL
+     LEVANTAMIENTO, que es el número con el que se calcula el Training Max.
+     Poner aquí el e1RM de una serie de respaldo al 65 % sería justo la
+     confusión que hay que evitar: tres cifras distintas con la misma pinta. */
+  const w = waveFor(i);
+  if (w) {
+    const m = WAVE.maxes[w.lift] || {};
+    const stored = Number(m.e1rm_kg) || 0;
+    let live = 0;
+    const nw = nSets(i);
+    for (let s = 0; s < nw; s++) {
+      const st = SESS.sets.get(key(i, s, false));
+      if (st && st.done && w.work[s] && w.work[s].amrap) {
+        live = Math.max(live, S.amrapE1rm(st.weight_kg, st.reps, st.rir) || 0);
+      }
+    }
+    const val = Math.max(stored, live);
+    if (!val) return 'sin 1RM';
+    return `1RM est. ${U.fmtNum(U.toDisplay(val, u), 0)} ${U.wLabel(u)}`
+      + (live > stored ? '<em>nuevo</em>' : '');
+  }
+
   let best = null;
-  for (let s = 0; s < e.sets; s++) {
+  const total = nSets(i);
+  for (let s = 0; s < total; s++) {
     const st = SESS.sets.get(key(i, s, false));
     if (st && st.done) {
       const v = U.e1rm(st.weight_kg, st.reps);
@@ -2181,10 +2438,22 @@ function paintKf(i, s, f) {
   el.innerHTML = `${esc(fieldText(i, s, f))} <small>${unitOf(i, f)}</small>${f === 'reps' ? rirBadge(i, s) : ''}`;
 }
 
-/** Prescripción de la columna Auto. */
+/**
+ * Prescripción de la columna Auto.
+ * Con la ola de fuerza nunca se muestra un número suelto: el peso va siempre
+ * acompañado del porcentaje y de sobre qué se calcula ("del TM"), porque son
+ * tres cifras distintas (1RM, Training Max y peso de la serie) que si no se
+ * confunden entre sí.
+ */
 function autoMain(i, s) {
   const e = SESS.ex[i];
   const u = units();
+  const w = waveFor(i);
+  if (w && w.work[s]) {
+    const x = w.work[s];
+    return `${pct(x.pct)} del TM · ${U.fmtNum(x.display, 1)} ${U.wLabel(u)} · `
+      + `${x.reps}${x.amrap ? '+' : ''}`;
+  }
   if (e.is_time) return `${targetReps(i, s)} s`;
   const t = targetKg(i, s);
   if (t == null) return 'Elige el peso';
@@ -2193,10 +2462,21 @@ function autoMain(i, s) {
 
 function autoSub(i, s) {
   const e = SESS.ex[i];
+  const w = waveFor(i);
+  if (w && w.work[s]) {
+    const x = w.work[s];
+    if (x.amrap) return 'AMRAP · haz las que puedas';
+    return x.kind === 'respaldo' ? `serie ${s + 1} · respaldo` : `serie ${s + 1} · trabajo`;
+  }
   if (e.is_time) return 'aguanta';
   const t = targetKg(i, s);
   if (t == null) return `${repRange(i, s)} · ${targetRir(i, s)} RIR`;
   return `${targetRir(i, s)} RIR`;
+}
+
+/** Descripción completa de una serie, para las etiquetas de accesibilidad. */
+function setLabel(i, s) {
+  return `Serie ${s + 1} · ${autoMain(i, s)}`;
 }
 
 const RIRTXT = { 0: 'al fallo', 1: 'te sobra 1 repe', 2: 'te sobran 2 repes', 3: 'te sobran 3 repes' };
@@ -2222,8 +2502,11 @@ function renderFocus() {
     wu.forEach((w, wi) => {
       const st = SESS.sets.get(key(i, wi, true)) || {};
       const on = !!st.done;
+      const cab = w.pct
+        ? `${pct(w.pct)} del TM · ${U.fmtNum(U.toDisplay(w.kg, u), 1)} ${U.wLabel(u)} × ${w.reps}`
+        : `${U.fmtNum(U.toDisplay(w.kg, u), 1)} ${U.wLabel(u)} × ${w.reps}`;
       rows += `<div class="rp-r warm${on ? ' done' : ''}"><span class="rp-n">C${wi + 1}</span>
-        <span class="rp-auto">${U.fmtNum(U.toDisplay(w.kg, u), 1)} ${U.wLabel(u)} × ${w.reps}<small>calentamiento</small></span>
+        <span class="rp-auto">${esc(cab)}<small>calentamiento</small></span>
         <span class="kf ro">${U.fmtNum(U.toDisplay(w.kg, u), 1)} <small>${U.wLabel(u)}</small></span>
         <span class="kf ro">${w.reps} <small>reps</small></span>
         <button class="tick" type="button" data-act="wtick" data-i="${i}" data-w="${wi}"
@@ -2231,12 +2514,15 @@ function renderFocus() {
     });
   }
 
-  for (let s = 0; s < e.sets; s++) {
+  const wave = waveFor(i);
+  const total = nSets(i);
+  for (let s = 0; s < total; s++) {
     const st = SESS.sets.get(key(i, s, false));
-    const isTop = strength && s === 0;
+    const amrap = !!(wave && wave.work[s] && wave.work[s].amrap);
+    const isTop = amrap || (!wave && strength && s === 0);
     rows += `<div class="rp-r${st.done ? ' done' : ''}${isTop ? ' top' : ''}" id="rp-${i}-${s}">
-      <span class="rp-n">${isTop ? 'TOP' : s + 1}</span>
-      <span class="rp-auto">${esc(autoMain(i, s))}<small>${esc(autoSub(i, s))}</small></span>
+      <span class="rp-n${amrap ? ' amrap' : ''}">${amrap ? 'AMRAP' : (isTop ? 'TOP' : s + 1)}</span>
+      <span class="rp-auto" aria-label="${esc(setLabel(i, s))}">${esc(autoMain(i, s))}<small>${esc(autoSub(i, s))}</small></span>
       <button class="kf" type="button" data-act="field" data-i="${i}" data-s="${s}" data-f="kg"
         id="kf-kg-${i}-${s}" aria-label="Peso de la serie ${s + 1} en ${U.wLabel(u)}">
         ${esc(fieldText(i, s, 'kg'))} <small>${U.wLabel(u)}</small></button>
@@ -2248,9 +2534,28 @@ function renderFocus() {
   }
 
   const rirNow = targetRir(i, strength ? 1 : 0);
-  let hints = `<p class="hint"><b>Objetivo:</b> ${strength && !e.is_time
-    ? `la serie TOP cerca del límite (${RIRTXT[1]}), y las de después más suaves.`
-    : `para cuando ${RIRTXT[rirNow] || `te sobren ${rirNow} repes`}. No hace falta llegar al fallo.`}</p>`;
+  let hints = '';
+  if (wave) {
+    const m = WAVE.maxes[wave.lift];
+    hints += `<p class="hint"><b>${esc(S.waveLabel(wave.cycle, wave.week))}.</b>
+      Los pesos son porcentajes del <b>Training Max</b> (${U.fmtNum(wave.tm, 1)} ${U.wLabel(u)}),
+      no de tu 1RM${m && m.e1rm_kg ? ` (${esc(w2(m.e1rm_kg))})` : ''}. El TM es un 90 % a propósito:
+      así las series pesadas se pueden repetir semana tras semana.</p>`;
+    hints += wave.work.some((x) => x.amrap)
+      ? `<p class="hint pr"><b>La última serie de trabajo es AMRAP:</b> haz todas las repeticiones
+        que puedas con técnica limpia y anótalas. De ahí sale tu 1RM estimado y la progresión.</p>`
+      : `<p class="hint"><b>Semana de descarga.</b> Sin AMRAP y sin series al límite: se trata de
+        llegar fresca a la ola siguiente.</p>`;
+    if (UI.tmDrop[wave.lift]) {
+      hints += `<p class="hint warn"><b>El Training Max de ${esc(S.LIFT_LABEL[wave.lift])} parece alto.</b>
+        Con menos de ${S.RESET_REPS} repeticiones al 95 %, lo habitual es bajarlo un 10 %.
+        Puedes confirmarlo en Entrenar, en el recuadro de la ola.</p>`;
+    }
+  } else {
+    hints += `<p class="hint"><b>Objetivo:</b> ${strength && !e.is_time
+      ? `la serie TOP cerca del límite (${RIRTXT[1]}), y las de después más suaves.`
+      : `para cuando ${RIRTXT[rirNow] || `te sobren ${rirNow} repes`}. No hace falta llegar al fallo.`}</p>`;
+  }
 
   const lb = lastBest[e.name];
   if (lb) {
@@ -2281,9 +2586,10 @@ function renderFocus() {
 
   $('exlist').innerHTML = `<div class="fx"><div class="fx-h"><div class="grow">
     <h2>${esc(e.name)}</h2>
-    <p class="who" id="serieNow">Serie ${firstOpen(i)} de ${e.sets}</p></div>
+    <p class="who" id="serieNow">Serie ${firstOpen(i)} de ${total}</p></div>
     <div class="e1" id="e1pill">${e1Html(i)}</div></div>
     <div class="chips" style="margin-top:9px"><span class="chip m">${esc(e.muscle)}</span>
+    ${wave ? `<span class="chip lv">${esc(S.waveLabel(wave.cycle, wave.week))}</span>` : ''}
     <span class="chip">${esc(C.EQL[e.equipment] || e.equipment)}</span>
     <span class="chip">${e.rest_s}s desc.</span></div>
     ${gifHtml(e.name, 'ex-gif')}
@@ -2332,8 +2638,9 @@ function updateSess() {
   let done = 0;
   let tot = 0;
   SESS.ex.forEach((e, i) => {
-    tot += e.sets;
-    for (let s = 0; s < e.sets; s++) {
+    const n = nSets(i);
+    tot += n;
+    for (let s = 0; s < n; s++) {
       const st = SESS.sets.get(key(i, s, false));
       if (st && st.done) done++;
     }
@@ -2343,7 +2650,7 @@ function updateSess() {
   $('finish').style.display = (tot && done === tot) ? 'block' : 'none';
   renderStrip();
   const sn = $('serieNow');
-  if (sn) sn.textContent = `Serie ${firstOpen(UI.exIdx)} de ${SESS.ex[UI.exIdx].sets}`;
+  if (sn) sn.textContent = `Serie ${firstOpen(UI.exIdx)} de ${nSets(UI.exIdx)}`;
   const pill = $('e1pill');
   if (pill) pill.innerHTML = e1Html(UI.exIdx);
 }
@@ -2426,12 +2733,18 @@ function bindSession() {
       const st = SESS.sets.get(k);
       if (!st) return;
       st.done = !st.done;
+      st.touched = true;
       const row = $(`rp-${i}-${s}`);
       if (row) row.classList.toggle('done', st.done);
       b.setAttribute('aria-pressed', String(st.done));
       if (st.done) startTimer(SESS.ex[i].rest_s, 'Descanso'); else stopTimer();
+      /* Marcar la primera serie también propone las siguientes. */
+      const spread = st.done ? autofillFrom(i, s) : [];
+      if (spread.length) renderFocus();
       updateSess();
       persistSet(k);
+      spread.forEach((sk) => persistSet(sk));
+      if (st.done) await registerAmrap(i, s);
     }
   });
 
@@ -2485,6 +2798,46 @@ function bindSession() {
   $('less').addEventListener('click', () => { left = Math.max(5, left - 30); paintRest(); });
 }
 
+/**
+ * Registra una serie AMRAP: actualiza el 1RM estimado si ha mejorado y
+ * levanta la propuesta de bajar el TM cuando la semana 3 se queda corta.
+ *
+ * El e1RM NO pisa un 1RM que el usuario haya puesto a mano (`source` =
+ * 'manual'): si él dice que su máximo es otro, manda él. Cuando lo actualiza
+ * la app, queda marcado como 'calculado' para que se vea de dónde sale.
+ */
+async function registerAmrap(i, s) {
+  const w = waveFor(i);
+  if (!w || !w.work[s] || !w.work[s].amrap) return;
+  const st = SESS.sets.get(key(i, s, false));
+  if (!st || !st.done) return;
+  const reps = Number(st.reps) || 0;
+  if (reps <= 0) return;
+
+  const m = WAVE.maxes[w.lift] || {};
+  const est = S.amrapE1rm(st.weight_kg, reps, st.rir);
+  const prev = Number(m.e1rm_kg) || 0;
+  if (est && est > prev && m.source !== 'manual') {
+    await db.write('liftmax', {
+      profileId: profile.id,
+      lift: w.lift,
+      patch: { e1rm_kg: est, training_max_kg: m.training_max_kg, source: 'calculado' },
+    }, `liftmax:${w.lift}`).catch(() => {});
+    WAVE.maxes[w.lift] = { ...m, e1rm_kg: est, source: 'calculado' };
+  }
+
+  /* Regla de reajuste del 5/3/1: menos de 3 repeticiones al 95 % significa
+     que el Training Max va por delante de la fuerza real. Se PROPONE bajarlo;
+     no se toca nada sin confirmación. */
+  if (S.needsReset(w.week, reps)) {
+    UI.tmDrop[w.lift] = true;
+    saveUI();
+  }
+  renderFocus();
+  renderWave();
+  renderSettings();
+}
+
 let sessTimer = null;
 function startSessClock() {
   if (sessTimer) clearInterval(sessTimer);
@@ -2505,7 +2858,8 @@ async function saveSession() {
   let done = 0;
   let vol = 0;
   SESS.ex.forEach((e, i) => {
-    for (let s = 0; s < e.sets; s++) {
+    const n = nSets(i);
+    for (let s = 0; s < n; s++) {
       const st = SESS.sets.get(key(i, s, false));
       if (st && st.done) { done++; vol += (Number(st.weight_kg) || 0) * (Number(st.reps) || 0); }
     }
@@ -2568,7 +2922,7 @@ function doSwap(i) {
     }
     Object.assign(e, patch);
     /* Las series de ese ejercicio se rehacen: eran de otro movimiento. */
-    for (let s = 0; s < e.sets + 4; s++) {
+    for (let s = 0; s < e.sets + 6; s++) {
       SESS.sets.delete(key(i, s, false));
       SESS.sets.delete(key(i, s, true));
     }
@@ -2797,11 +3151,21 @@ function commitKpad() {
     const v = Math.max(0, Math.round(U.num(KP.buf)));
     if (e.is_time) st.seconds = v; else st.reps = v;
   }
+  st.touched = true;
   KP.buf = '';
   paintKf(KP.i, KP.s, KP.f);
   const pill = $('e1pill');
   if (pill) pill.innerHTML = e1Html(UI.exIdx);
   persistSet(k);
+  /* Autorrelleno: lo que se acaba de escribir se propone para las series
+     siguientes que aún no se han tocado. */
+  const spread = autofillFrom(KP.i, KP.s);
+  spread.forEach((sk) => {
+    persistSet(sk);
+    const n = Number(sk.split(':')[1]);
+    paintKf(KP.i, n, 'kg');
+    paintKf(KP.i, n, 'reps');
+  });
 }
 
 function openKpad(i, s, f) {
@@ -2861,16 +3225,21 @@ function setRir(v) {
   const st = SESS.sets.get(k);
   if (!st) return;
   st.rir = v === '?' ? null : v;
+  st.touched = true;
   paintKf(KP.i, KP.s, 'reps');
   renderDots();
   persistSet(k);
+  autofillFrom(KP.i, KP.s).forEach((sk) => {
+    persistSet(sk);
+    paintKf(KP.i, Number(sk.split(':')[1]), 'reps');
+  });
 }
 
 function nextField() {
   const { i, s, f } = KP;
   commitKpad();
   if (f === 'kg') { openKpad(i, s, 'reps'); return; }
-  if (s + 1 < SESS.ex[i].sets) { openKpad(i, s + 1, 'kg'); return; }
+  if (s + 1 < nSets(i)) { openKpad(i, s + 1, 'kg'); return; }
   closeKpad();
 }
 
@@ -3070,6 +3439,151 @@ function renderSettings() {
       <p>${lim.length ? esc(lim.join(', ')) : 'ninguna'}</p></div></div>
     <div class="set-row"><div class="grow"><h4>Prioridades</h4>
       <p>${esc((profile.priorities || []).join(', ') || 'sin prioridades')}</p></div></div>`;
+
+  renderPrefs();
+  renderStrengthSet();
+}
+
+/* ══ Tu semana · las respuestas del cuestionario, editables ═════════════ */
+
+const MIN_CHOICES = [[30, '30 min'], [45, '45 min'], [60, '60 min'], [75, '75+ min']];
+
+/** Fila de ajuste con sus opciones. `key` es la columna de `profiles`. */
+function prefRow(title, desc, key, options, current) {
+  return `<div class="set-row" style="flex-direction:column;align-items:stretch">
+    <div class="grow"><h4>${esc(title)}</h4><p>${esc(desc)}</p></div>
+    <div class="chip-grid" style="margin-top:9px">${options.map(([v, l]) => `
+      <button class="pick" type="button" data-pref="${esc(key)}" data-val="${esc(String(v))}"
+        aria-pressed="${String(current) === String(v)}">${esc(l)}</button>`).join('')}</div>
+  </div>`;
+}
+
+function renderPrefs() {
+  const box = $('setPrefs');
+  if (!box) return;
+  const d = profile.days_per_week || 3;
+  const overlap = profile.overlap_pref || 'indiferente';
+  const rec = recommendStructure(d, overlap);
+  const avoid = overlap === 'evitar';
+  const ids = avoid ? NO_OVERLAP_IDS : STRUCTURE_IDS;
+  const stActual = profile.structure === 'auto' ? rec : profile.structure;
+
+  box.innerHTML = `
+    ${prefRow('Días por semana', 'Sesiones a repartir.', 'days_per_week',
+    [1, 2, 3, 4, 5, 6, 7].map((n) => [n, String(n)]), d)}
+    ${prefRow('Duración de la sesión',
+    `Con ${profile.minutes} minutos entran unos ${exercisesPerSession(profile.minutes, profile.goal)} ejercicios.`,
+    'minutes', MIN_CHOICES, profile.minutes)}
+    ${prefRow('Repetir músculos en días seguidos',
+    'Evitarlo baja la fatiga acumulada; buscarlo sube la frecuencia por músculo.',
+    'overlap_pref', Object.keys(OVERLAP_LABEL).map((k) => [k, OVERLAP_LABEL[k]]), overlap)}
+    ${prefRow('Estructura de la semana',
+    `${STRUCTURES[stActual].label}: ${STRUCTURES[stActual].line}`,
+    'structure', [['auto', 'Elige por mí']].concat(ids.map((id) => [id, STRUCTURES[id].label])),
+    profile.structure)}
+    ${prefRow('Cuánto apretar',
+    `Rango objetivo: ${volumeTarget(profile.level, profile.volume_pref).low}-`
+    + `${volumeTarget(profile.level, profile.volume_pref).high} series por músculo y semana.`,
+    'volume_pref', Object.keys(VOLUME_LABEL).map((k) => [k, VOLUME_LABEL[k]]), profile.volume_pref || 'medio')}
+    ${prefRow('Variedad de ejercicios',
+    'Pocos y repetidos, o más variados por sesión.',
+    'variety_pref', Object.keys(VARIETY_LABEL).map((k) => [k, VARIETY_LABEL[k]]),
+    profile.variety_pref || 'variada')}`;
+}
+
+/* ══ Fuerza · 1RM y Training Max ═══════════════════════════════════════
+   Aquí conviven TRES números que se confunden con facilidad, así que cada
+   uno lleva su nombre completo:
+     · 1RM estimado    · lo máximo que levantarías una sola vez
+     · Training Max    · el 90 % de ese 1RM, la base de todos los porcentajes
+     · peso de la serie· el porcentaje de la semana aplicado al TM
+   Los dos primeros son editables a mano. Tocar el 1RM lo marca como
+   'manual', y a partir de ahí las AMRAP dejan de reescribirlo solas.       */
+
+const SRC_TXT = { manual: 'puesto a mano', calculado: 'calculado de una serie', historico: 'de tu histórico' };
+
+function renderStrengthSet() {
+  const box = $('setStrength');
+  if (!box) return;
+  const u = units();
+  const c = WAVE.cycle;
+  box.innerHTML = `
+    <p class="note" style="margin:0 0 12px">El <b>1RM estimado</b> es lo máximo que levantarías
+      una sola vez. El <b>Training Max</b> es un 90 % de ese número, deliberadamente por debajo:
+      sobre él se calculan los porcentajes para que las series pesadas sean repetibles y no un
+      test. Todo se guarda en kilos y se muestra en ${U.wLabel(u) === 'lb' ? 'libras' : 'kilos'}.</p>
+    ${c ? `<div class="set-row"><div class="grow"><h4>Ola en curso</h4>
+      <p>${esc(S.waveLabel(c.cycle_num, c.week))} · ${esc(weekLine(c.week))}</p></div></div>` : ''}
+    ${S.LIFTS.map((l) => {
+    const m = WAVE.maxes[l];
+    const e = m ? U.fmtNum(U.toDisplay(m.e1rm_kg, u), 1) : '';
+    const tm = m ? U.fmtNum(U.toDisplay(m.training_max_kg, u), 1) : '';
+    return `<div class="set-row" style="flex-direction:column;align-items:stretch">
+      <div class="grow"><h4>${esc(S.LIFT_LABEL[l])}</h4>
+        <p id="tm-${l}-out">${m ? `1RM ${SRC_TXT[m.source] || esc(m.source || '')}`
+      : 'Sin datos todavía'}</p></div>
+      <div class="pair" style="margin-top:9px">
+        <div><label class="f-lbl" for="tm-${l}-e">1RM estimado (${U.wLabel(u)})</label>
+          <input class="in mono" id="tm-${l}-e" data-tm="${l}|e1rm" type="text" inputmode="decimal"
+            value="${esc(e)}" placeholder="—"></div>
+        <div><label class="f-lbl" for="tm-${l}-t">Training Max · 90 % (${U.wLabel(u)})</label>
+          <input class="in mono" id="tm-${l}-t" data-tm="${l}|tm" type="text" inputmode="decimal"
+            value="${esc(tm)}" placeholder="—"></div>
+      </div></div>`;
+  }).join('')}
+    <div class="g2" style="margin-top:12px">
+      <button class="btn ghost" id="tmRecalc" type="button">Recalcular TM = 90 % del 1RM</button>
+      <button class="btn ghost" id="tmSave" type="button">Guardar máximos</button>
+    </div>
+    <p class="note" id="tmMsg">Los pesos de cada serie se redondean a lo que se puede montar de
+      verdad: de ${U.fmtNum(U.step(u), 1)} en ${U.fmtNum(U.step(u), 1)} ${U.wLabel(u)} con barra de
+      ${U.fmtNum(U.barDisplay(u), 0)} ${U.wLabel(u)}.</p>`;
+}
+
+/** Lee los cuatro pares de campos de la pantalla Fuerza. */
+function readStrengthForm() {
+  const u = units();
+  const out = {};
+  S.LIFTS.forEach((l) => {
+    const e = $(`tm-${l}-e`);
+    const t = $(`tm-${l}-t`);
+    out[l] = {
+      e1rm: e ? U.fromInput(e.value, u) : 0,
+      tm: t ? U.fromInput(t.value, u) : 0,
+    };
+  });
+  return out;
+}
+
+async function saveStrengthForm() {
+  const msg = $('tmMsg');
+  const form = readStrengthForm();
+  msg.textContent = 'Guardando…';
+  for (const l of S.LIFTS) {
+    const v = form[l];
+    if (!(v.e1rm > 0) && !(v.tm > 0)) continue;
+    const prev = WAVE.maxes[l] || {};
+    const e1 = v.e1rm > 0 ? v.e1rm : Number(prev.e1rm_kg) || 0;
+    const tm = v.tm > 0 ? v.tm : S.tmFromE1rm(e1, units());
+    /* Editar el 1RM a mano lo blinda: las AMRAP ya no lo reescriben solas. */
+    const cambiado = Math.abs(e1 - (Number(prev.e1rm_kg) || 0)) > 0.01;
+    await db.write('liftmax', {
+      profileId: profile.id,
+      lift: l,
+      patch: {
+        e1rm_kg: e1,
+        training_max_kg: tm,
+        source: cambiado ? 'manual' : (prev.source || 'manual'),
+      },
+    }, `liftmax:${l}`).catch(() => {});
+  }
+  await loadStrength();
+  waveCache.clear();
+  renderStrengthSet();
+  renderWave();
+  renderProgram();
+  if (SESS.day && SESS.ex.length) buildSession();
+  $('tmMsg').textContent = 'Máximos guardados.';
 }
 
 function bindSettings() {
@@ -3090,11 +3604,82 @@ function bindSettings() {
   $('redoWiz').addEventListener('click', () => {
     startWizard();
   });
+
+  /* Preferencias de la semana: se guardan al tocarlas, pero la rutina no se
+     rehace sola. Regenerar es una decisión explícita. */
+  $('setPrefs').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-pref]');
+    if (!b) return;
+    const k = b.dataset.pref;
+    const raw = b.dataset.val;
+    const val = (k === 'days_per_week' || k === 'minutes') ? Number(raw) : raw;
+    profile[k] = val;
+    /* Una estructura que repite músculos no puede convivir con "evitar". */
+    if (k === 'overlap_pref' && val === 'evitar'
+      && STRUCTURES[profile.structure] && STRUCTURES[profile.structure].overlap) {
+      profile.structure = 'auto';
+    }
+    renderPrefs();
+    $('regenMsg').textContent = 'Guardado. Pulsa Regenerar rutina para aplicarlo a tu semana.';
+    try {
+      profile = await db.saveProfile(profile.id, {
+        [k]: val, ...(profile.structure === 'auto' ? { structure: 'auto' } : {}),
+      });
+    } catch (e) {
+      $('regenMsg').textContent = db.msgError(e);
+    }
+  });
+
+  $('regen').addEventListener('click', regenerate);
+
+  $('setStrength').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    if (b.id === 'tmSave') { await saveStrengthForm(); return; }
+    if (b.id !== 'tmRecalc') return;
+    /* Recalcula el TM al 90 % del 1RM que haya escrito en pantalla. */
+    const u = units();
+    const form = readStrengthForm();
+    S.LIFTS.forEach((l) => {
+      if (!(form[l].e1rm > 0)) return;
+      const t = $(`tm-${l}-t`);
+      if (t) t.value = U.fmtNum(U.toDisplay(S.tmFromE1rm(form[l].e1rm, u), u), 1);
+    });
+    $('tmMsg').textContent = 'Training Max recalculado al 90 %. Pulsa Guardar máximos para aplicarlo.';
+  });
   $('pwSave').addEventListener('click', changePassword);
   $('signOut').addEventListener('click', async () => {
     await db.signOut();
     showGate();
   });
+}
+
+/**
+ * Rehace la rutina con las preferencias actuales.
+ * La anterior se DESACTIVA, no se borra: las sesiones ya registradas cuelgan
+ * de sus días, así que borrarla se llevaría por delante el historial.
+ */
+async function regenerate() {
+  const btn = $('regen');
+  const msg = $('regenMsg');
+  btn.disabled = true;
+  btn.textContent = 'Regenerando…';
+  try {
+    const use531 = profile.goal === 'fuerza' && S.is531(routine) && hasAllMaxes();
+    const r = use531 ? S.build531Routine(profile) : generateRoutine(profile);
+    await db.saveRoutine(profile.id, r);
+    await loadRoutine();
+    UI.dayIndex = null;
+    saveUI();
+    renderWork();
+    renderDash();
+    renderPrefs();
+    msg.textContent = `Rutina nueva creada: ${r.name}. La anterior queda archivada con tu historial.`;
+  } catch (e) {
+    msg.textContent = db.msgError(e);
+  }
+  btn.disabled = false;
+  btn.textContent = 'Regenerar rutina';
 }
 
 /**
@@ -3107,9 +3692,14 @@ async function setUnits(u) {
   profile.units = next;
   UI.barDisplay = null;      // la barra por defecto cambia con el sistema
   saveUI();
+  /* Los porcentajes se redondean al incremento del sistema: al cambiarlo hay
+     que recalcular la ola entera. */
+  waveCache.clear();
   renderSettings();
   renderDash();
   renderStudio();
+  renderWork();
+  renderCreate();
   if (SESS.day && SESS.ex.length) { renderFocus(); updateSess(); }
   if (KP.open) renderKpTop();
   try {

@@ -272,15 +272,28 @@ export const TEMPLATE = [
 const BY_NAME = new Map(POOL.map((x) => [x.n, x]));
 
 /**
- * Sustituto de un accesorio que el equipo o una molestia dejan fuera: el
- * primer ejercicio del POOL del mismo grupo muscular que sí se pueda hacer.
- * Devuelve null si no hay ninguno, y entonces el accesorio simplemente no
- * entra: mejor una sesión de cuatro ejercicios que uno que duele.
+ * Sustituto de un accesorio que el equipo o una molestia dejan fuera.
+ *
+ * Se busca primero por PATRÓN de movimiento (unas dominadas se cambian por un
+ * jalón, no por un peso muerto) y solo después por grupo muscular. Los cuatro
+ * levantamientos de la ola nunca son candidatos: ya tienen su día y su
+ * porcentaje, y meterlos de accesorio duplicaría la carga de la semana.
+ * Devuelve null si no hay nada válido, y entonces el accesorio no entra:
+ * mejor una sesión de cuatro ejercicios que uno que duele.
  */
-function substitute(item, equipment, banned, used) {
-  return POOL.find((x) => x.g === item.g && x.n !== item.n
-    && equipment.includes(x.eq) && !banned.has(x.n) && !used.has(x.n)) || null;
+function substitute(item, equipment, banned, used, reserved) {
+  const ok = (x) => x.n !== item.n && !EX_TO_LIFT[x.n]
+    && equipment.includes(x.eq) && !banned.has(x.n)
+    && !used.has(x.n) && !reserved.has(x.n);
+  return POOL.find((x) => ok(x) && x.pat === item.pat)
+    || POOL.find((x) => ok(x) && x.g === item.g)
+    || null;
 }
+
+/* Repeticiones por defecto cuando el recambio no se mide igual que el
+   original: un crunch no se hace "de 20 a 45 segundos" solo porque venga a
+   sustituir a una plancha. */
+const DEFAULT_REPS = { time: [20, 45], reps: [12, 15] };
 
 /** Fila de routine_exercises a partir de una entrada del POOL. */
 function row(x, position, { sets, low, high, rir, rest, role, scheme }) {
@@ -330,6 +343,10 @@ export function build531Routine(profile) {
   }
 
   const used = new Set();
+  /* Accesorios que ya tienen su sitio en otro día: un recambio no debe
+     robarles el hueco y acabar repitiendo el mismo ejercicio dos veces. */
+  const reserved = new Set();
+  TEMPLATE.forEach((t) => t.accessories.forEach((a) => reserved.add(a.name)));
   const days = [];
 
   for (let d = 0; d < 7; d++) {
@@ -350,10 +367,13 @@ export function build531Routine(profile) {
     used.add(main.n);
 
     tpl.accessories.forEach((acc) => {
-      let x = BY_NAME.get(acc.name);
-      if (!x) return;
+      const orig = BY_NAME.get(acc.name);
+      if (!orig) return;
+      let x = orig;
+      let low = acc.low;
+      let high = acc.high;
       if (!equipment.includes(x.eq) || banned.has(x.n)) {
-        const alt = substitute(x, equipment, banned, used);
+        const alt = substitute(x, equipment, banned, used, reserved);
         if (!alt) {
           notes.push(`${acc.name} se ha quitado del día ${tpl.name.toLowerCase()}: no encaja con `
             + 'tu equipo o con las zonas que hay que cuidar, y no queda recambio.');
@@ -361,10 +381,15 @@ export function build531Routine(profile) {
         }
         notes.push(`${acc.name} se ha cambiado por ${alt.n} en ${tpl.name.toLowerCase()}.`);
         x = alt;
+        /* Si uno se mide en segundos y el otro en repeticiones, las cifras del
+           original no valen. */
+        if (!!x.time !== !!orig.time) {
+          [low, high] = DEFAULT_REPS[x.time ? 'time' : 'reps'];
+        }
       }
       used.add(x.n);
       exercises.push(row(x, exercises.length, {
-        sets: acc.sets, low: acc.low, high: acc.high, rir: acc.rir, rest: acc.rest, role: acc.role,
+        sets: acc.sets, low, high, rir: acc.rir, rest: acc.rest, role: acc.role,
       }));
     });
 

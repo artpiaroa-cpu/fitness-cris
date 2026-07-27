@@ -954,3 +954,23 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .big-num .v { min-width: 78px; font-size: 2.2rem; }
   .big-num button { width: 46px; height: 46px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BLOQUE 5 · Fuerza por porcentajes
+   ──────────────────────────────────────────────────────────────────────────
+   Solo lo que no cubrían los bloques anteriores. Todo con los tokens ya
+   existentes, para que siga funcionando en claro y en oscuro.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* La etiqueta AMRAP no cabe en los 30 px de la columna de serie con el
+   tamaño normal: se encoge y se tiñe de magenta para que salte a la vista. */
+.rp-n.amrap {
+  font-size: 8px; letter-spacing: -.02em; color: var(--mg);
+}
+.rp-r.top .rp-n.amrap { color: var(--mg); }
+
+/* Los ajustes de la semana apilan etiqueta y opciones: con seis opciones y
+   360 px de ancho, una fila horizontal se saldría de la pantalla. */
+#setPrefs .chip-grid .pick,
+#setStrength .pair input { min-width: 0; }
+#setPrefs .set-row .grow { width: 100%; }
