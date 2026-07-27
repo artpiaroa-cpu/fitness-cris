@@ -15,7 +15,13 @@
 import * as db from './db.js';
 import * as U from './units.js';
 import * as C from './catalog.js';
-import { generateRoutine, alternatives, exercisesPerSession, LIMITATION_MAP } from './generator.js';
+import * as S from './strength.js';
+import {
+  generateRoutine, alternatives, exercisesPerSession, LIMITATION_MAP,
+  explainPlan, recommendStructure, weeklyVolume, volumeTarget,
+  STRUCTURES, STRUCTURE_IDS, NO_OVERLAP_IDS,
+  OVERLAP_LABEL, VOLUME_LABEL, VARIETY_LABEL,
+} from './generator.js';
 import { ROUTINES, CARDIO } from './studio.js';
 
 /* ══ Utilidades ══════════════════════════════════════════════════════════ */
@@ -35,6 +41,10 @@ const UI = {
   view: 'v-dash', exIdx: 0, dayIndex: null, side: 'front', sexo: 'f',
   mode: 'hyper', tab: 'casa', barDisplay: null, warmOpen: {},
   cardio: { mode: 'Caminar', met: 3.5, min: 30, int: 1 },
+  /* Propuestas de bajar el Training Max pendientes de confirmar, por
+     levantamiento. No es un dato de entreno (ese está en session_sets): es un
+     aviso a medio contestar, y por eso vive aquí y no en la base. */
+  tmDrop: {},
 };
 try {
   const raw = localStorage.getItem(UI_KEY);
@@ -56,7 +66,17 @@ let recentSessions = [];  // sessions de los últimos 30 días
 let notes = {};           // exercise_notes
 let lastBest = {};        // ejercicio → mejor serie de su última sesión
 
+/* Estado de la fuerza por porcentajes: los cuatro máximos y la ola activa.
+   `maxes` va indexado por levantamiento y en kg canónicos. */
+const WAVE = { maxes: {}, cycle: null };
+
 const units = () => (profile && profile.units === 'lb' ? 'lb' : 'kg');
+
+/** Peso de presentación formateado con su unidad. */
+const w2 = (kg) => `${U.fmtNum(U.toDisplay(kg, units()), 1)} ${U.wLabel(units())}`;
+
+/** Porcentaje en texto español (85 %). */
+const pct = (p) => `${U.fmtNum(p * 100, 0)} %`;
 
 /* ══════════════════════════════════════════════════════════════════════════
    ARRANQUE
@@ -173,8 +193,18 @@ async function enterApp() {
   }
   UI.sexo = profile.sex === 'm' ? 'm' : 'f';
 
+  /* Los máximos hacen falta ya: el cuestionario los ofrece prellenados si el
+     usuario elige el programa de porcentajes. */
+  await loadStrength();
+
   if (!profile.onboarded) { startWizard(); return; }
   await showApp();
+}
+
+/** Máximos por levantamiento y ola activa. Si falla, se sigue sin fuerza. */
+async function loadStrength() {
+  try { WAVE.maxes = await db.getLiftMaxes(profile.id); } catch { WAVE.maxes = {}; }
+  try { WAVE.cycle = await db.getActiveCycle(profile.id); } catch { WAVE.cycle = null; }
 }
 
 async function showApp() {
@@ -242,6 +272,25 @@ const INTEREST_CHOICES = [
   ['movilidad', 'Movilidad', 'Rutinas cortas para desentumecer.'],
 ];
 
+/** Perfil de mentira con lo que lleva contestado el cuestionario. Sirve para
+    que el generador explique la semana ANTES de guardar nada. */
+function draftProfile() {
+  return {
+    units: draft.units,
+    goal: draft.goal,
+    level: draft.level,
+    days_per_week: draft.days_per_week,
+    minutes: draft.minutes,
+    equipment: draft.equipment,
+    limitations: draft.limitations.filter((x) => x !== 'ninguna'),
+    priorities: draft.priorities,
+    structure: draft.structure,
+    overlap_pref: draft.overlap_pref,
+    volume_pref: draft.volume_pref,
+    variety_pref: draft.variety_pref,
+  };
+}
+
 function startWizard() {
   draft = {
     units: profile.units || 'kg',
@@ -259,6 +308,13 @@ function startWizard() {
     limitations: (profile.limitations || []).slice(),
     priorities: (profile.priorities || []).slice(),
     interests: (profile.interests || []).slice(),
+    structure: profile.structure || 'auto',
+    overlap_pref: profile.overlap_pref || 'indiferente',
+    volume_pref: profile.volume_pref || 'medio',
+    variety_pref: profile.variety_pref || 'variada',
+    /* Solo para objetivo fuerza: generador normal o 5/3/1 por porcentajes. */
+    program: 'auto',
+    maxes: maxDraft(),
   };
   if (draft.height_cm) {
     const f = U.cmToFtIn(draft.height_cm);
@@ -361,9 +417,36 @@ const STEPS = [
   },
   {
     block: 'Logística', q: '¿Cuánto dura una sesión?',
-    why: () => `Con ${draft.minutes} minutos entran unos ${exercisesPerSession(draft.minutes)} ejercicios.`,
-    html: () => bigNum('minutes', draft.minutes, 'minutos', 5),
+    why: () => `Cuenta desde que empiezas a calentar. Con ${draft.minutes} minutos entran unos `
+      + `${exercisesPerSession(draft.minutes, draft.goal)} ejercicios.`,
+    html: () => optCards('minutes', [
+      ['30', '30 minutos', 'Lo justo para 3 o 4 ejercicios. Mejor esto que no ir.'],
+      ['45', '45 minutos', 'El punto dulce: caben 5 ejercicios sin ir con prisa.'],
+      ['60', '60 minutos', 'Sesión completa, con descansos largos en los básicos.'],
+      ['75', '75 minutos o más', 'Para entrenar fuerza con calma o añadir accesorios.'],
+    ], String(draft.minutes), true),
     valid: () => draft.minutes >= 10 && draft.minutes <= 180,
+  },
+  {
+    block: 'Semana', q: '¿Te importa repetir músculos en días seguidos?',
+    why: 'No hay una respuesta mejor: depende de cómo llegues al día siguiente. '
+      + 'Es lo que más cambia el reparto de tu semana.',
+    html: () => optCards('overlap_pref', [
+      ['evitar', 'Mejor no',
+        'Prefiero que cada día toque músculos distintos, así llego menos cansada.'],
+      ['indiferente', 'Me da igual',
+        'Reparte como salga mejor con mis días.'],
+      ['frecuencia', 'Al revés: cuantas más veces, mejor',
+        'Quiero tocar cada músculo varias veces por semana.'],
+    ], draft.overlap_pref, true) + overlapNote(),
+    valid: () => !!draft.overlap_pref,
+  },
+  {
+    block: 'Semana', q: '¿Cómo repartimos la semana?',
+    why: 'Debajo de cada opción tienes con cuántos días encaja y cuántas veces se '
+      + 'entrena cada músculo. Si no lo tienes claro, deja que elijamos nosotros.',
+    html: () => structureCards(),
+    valid: () => !!draft.structure,
   },
   {
     block: 'Logística', q: '¿Con qué puedes contar?',
@@ -401,6 +484,33 @@ const STEPS = [
     optional: true,
   },
   {
+    block: 'Preferencias', q: '¿Cuánto quieres apretar?',
+    why: 'Mueve el número de series semanales por músculo. Más no siempre es mejor: '
+      + 'a partir de cierto punto cada serie extra aporta menos y cansa igual.',
+    html: () => optCards('volume_pref', [
+      ['bajo', 'Suave', 'Un 25 % menos de series. Recuperas rápido y es fácil de sostener; '
+        + 'se progresa más despacio.'],
+      ['medio', 'Normal', 'El rango que toca por tu nivel. Es lo que recomienda la evidencia '
+        + 'para la mayoría de la gente.'],
+      ['alto', 'Fuerte', 'Un 25 % más de series. Más estímulo, pero también más fatiga: '
+        + 'solo si duermes y comes bien.'],
+    ], draft.volume_pref, true),
+    valid: () => !!draft.volume_pref,
+  },
+  {
+    block: 'Preferencias', q: '¿Pocos ejercicios o variados?',
+    why: 'Las dos funcionan. Repetir siempre lo mismo hace más fácil ver si progresas; '
+      + 'variar cubre más ángulos y se hace más ameno.',
+    html: () => optCards('variety_pref', [
+      ['pocos', 'Pocos ejercicios, más series',
+        'Los mismos movimientos cada semana, con una serie extra en lo que priorizas.'],
+      ['variada', 'Más variedad',
+        'Más ejercicios distintos por sesión, incluyendo un segundo del mismo patrón '
+        + 'si ese músculo es prioridad.'],
+    ], draft.variety_pref, true),
+    valid: () => !!draft.variety_pref,
+  },
+  {
     block: 'Preferencias', q: '¿Te interesa algo más suave?',
     why: 'Aparecerá en la pestaña Estudio, para los días que no toca gimnasio.',
     html: () => `<div class="opts">${INTEREST_CHOICES.map(([k, t, d]) =>
@@ -408,7 +518,128 @@ const STEPS = [
     valid: () => true,
     optional: true,
   },
+  /* Los dos pasos siguientes solo aparecen con objetivo fuerza: el 5/3/1 se
+     ofrece, no se impone, y sin los cuatro máximos no se puede calcular. */
+  {
+    block: 'Fuerza', q: '¿Qué programa de fuerza quieres?',
+    when: () => draft.goal === 'fuerza',
+    why: 'El 5/3/1 va por porcentajes de tu máximo y sube solo cada cuatro semanas. '
+      + 'El generador normal se adapta a tus días, tu equipo y tu historial.',
+    html: () => optCards('program', [
+      ['auto', 'Generador normal',
+        'Rutina hecha con tus respuestas. Los básicos van con una serie pesada y series '
+        + 'de respaldo más ligeras.'],
+      ['531', 'Programa 5/3/1 por porcentajes',
+        'Cuatro días torso/pierna. Banca, sentadilla, militar y peso muerto con porcentajes '
+        + 'del Training Max y una serie AMRAP cada semana.'],
+    ], draft.program, true),
+    valid: () => !!draft.program,
+  },
+  {
+    block: 'Fuerza', q: '¿Cuáles son tus máximos?',
+    when: () => draft.goal === 'fuerza' && draft.program === '531',
+    why: 'Todos los porcentajes salen de aquí. Pon tu mejor serie reciente de cada '
+      + 'levantamiento: con el peso y las repeticiones estimamos el 1RM, y el Training Max '
+      + 'es el 90 % de ese 1RM.',
+    html: () => liftMaxFields(),
+    valid: () => S.LIFTS.every((l) => maxE1rmKg(l) > 0),
+    err: 'Faltan levantamientos por rellenar.',
+  },
 ];
+
+/** Pasos que tocan con lo contestado hasta ahora (algunos son condicionales). */
+function steps() { return STEPS.filter((s) => !s.when || s.when()); }
+
+/* ── Piezas del cuestionario que necesitan calcular algo ─────────────────── */
+
+/** Aviso honesto del coste de no repetir músculos con pocos días. */
+function overlapNote() {
+  if (draft.overlap_pref !== 'evitar') return '';
+  let info;
+  try {
+    info = explainPlan({ ...draftProfile(), structure: 'auto', overlap_pref: 'evitar' });
+  } catch { return ''; }
+  const freqs = Object.values(info.freq || {});
+  if (!freqs.length) return '';
+  const min = Math.min(...freqs);
+  const d = draft.days_per_week;
+  if (min >= 2) {
+    return `<p class="hint pr"><b>Con ${d} ${d === 1 ? 'día' : 'días'} te sale bien:</b>
+      ${esc(info.label)} deja cada músculo a ${min} veces por semana sin repetir en días seguidos.</p>`;
+  }
+  return `<p class="hint warn"><b>Con ${d} ${d === 1 ? 'día' : 'días'} y sin repetir músculos,
+    cada grupo se entrena 1 vez por semana.</b> Es menos de lo ideal (2×), pero evita la
+    fatiga acumulada.</p>`;
+}
+
+/** Tarjetas de estructura, con la recomendada marcada y "Elige por mí". */
+function structureCards() {
+  const d = draft.days_per_week;
+  const avoid = draft.overlap_pref === 'evitar';
+  const ids = avoid ? NO_OVERLAP_IDS : STRUCTURE_IDS;
+  const rec = recommendStructure(d, draft.overlap_pref);
+  const list = [['auto', 'Elige por mí',
+    `Con ${d} ${d === 1 ? 'día' : 'días'} usaremos ${STRUCTURES[rec].label}. ${STRUCTURES[rec].line}`]];
+  ids.forEach((id) => {
+    const st = STRUCTURES[id];
+    list.push([id, `${st.label}${id === rec ? ' · recomendada para ti' : ''}`,
+      `${st.line} ${st.why}`]);
+  });
+  return optCards('structure', list, draft.structure, true)
+    + (avoid ? `<p class="note">Cuerpo completo no aparece: repite todos los músculos en cada
+      sesión, que es justo lo que has dicho que prefieres evitar.</p>` : '');
+}
+
+/* ── Máximos de los cuatro levantamientos ────────────────────────────────── */
+
+/** Formulario en blanco (o con lo ya guardado) para los cuatro máximos. */
+function maxDraft() {
+  const u = profile && profile.units === 'lb' ? 'lb' : 'kg';
+  const out = {};
+  S.LIFTS.forEach((l) => {
+    const cur = WAVE.maxes[l];
+    out[l] = {
+      w: cur && cur.e1rm_kg ? U.fmtNum(U.toDisplay(cur.e1rm_kg, u), 1) : '',
+      r: '1',
+    };
+  });
+  return out;
+}
+
+/** 1RM estimado en kg del levantamiento `l` según lo escrito en el formulario. */
+function maxE1rmKg(l) {
+  const m = (draft && draft.maxes && draft.maxes[l]) || { w: '', r: '1' };
+  const kg = U.fromInput(m.w, draft.units);
+  const reps = Math.max(1, Math.min(15, Math.round(U.num(m.r) || 1)));
+  if (kg <= 0) return 0;
+  return U.e1rm(kg, reps) || 0;
+}
+
+function maxLine(l) {
+  const e = maxE1rmKg(l);
+  const u = draft.units;
+  if (!e) return 'Peso y repeticiones de una serie reciente. Si conoces tu máximo, pon 1 repetición.';
+  const tm = S.tmFromE1rm(e, u);
+  return `1RM estimado ${U.fmtNum(U.toDisplay(e, u), 1)} ${U.wLabel(u)} · `
+    + `Training Max ${U.fmtNum(U.toDisplay(tm, u), 1)} ${U.wLabel(u)}`;
+}
+
+function liftMaxFields() {
+  const u = draft.units;
+  return `<div class="opts">${S.LIFTS.map((l) => `
+    <div class="panel p">
+      <p class="lbl">${esc(S.LIFT_LABEL[l])}</p>
+      <div class="pair" style="margin-top:9px">
+        <div><label class="f-lbl" for="mx-${l}-w">Peso (${U.wLabel(u)})</label>
+          <input class="in mono" id="mx-${l}-w" data-max="${l}|w" type="text" inputmode="decimal"
+            value="${esc(draft.maxes[l].w)}" placeholder="${u === 'lb' ? '225' : '100'}"></div>
+        <div><label class="f-lbl" for="mx-${l}-r">Repeticiones</label>
+          <input class="in mono" id="mx-${l}-r" data-max="${l}|r" type="text" inputmode="numeric"
+            value="${esc(draft.maxes[l].r)}" placeholder="1"></div>
+      </div>
+      <p class="note" id="mx-${l}-out">${esc(maxLine(l))}</p>
+    </div>`).join('')}</div>`;
+}
 
 /** Tarjetas de opción; `single` decide si es radio o casilla múltiple. */
 function optCards(key, list, current, single) {
@@ -433,15 +664,18 @@ function bigNum(key, val, unit, stepBy) {
 }
 
 function renderStep() {
-  const s = STEPS[wzAt];
-  $('wzBar').style.width = `${Math.round((wzAt / STEPS.length) * 100)}%`;
-  $('wzStep').textContent = `Paso ${wzAt + 1} de ${STEPS.length}`;
+  const list = steps();
+  if (wzAt >= list.length) wzAt = list.length - 1;
+  if (wzAt < 0) wzAt = 0;
+  const s = list[wzAt];
+  $('wzBar').style.width = `${Math.round((wzAt / list.length) * 100)}%`;
+  $('wzStep').textContent = `Paso ${wzAt + 1} de ${list.length}`;
   $('wzBlock').textContent = s.block;
   const why = typeof s.why === 'function' ? s.why() : s.why;
   $('wzBody').innerHTML = `<h2>${esc(s.q)}</h2><p class="why">${esc(why)}</p>
     ${s.html()}<p class="err" id="wzErr" role="alert"></p>`;
   $('wzBack').style.visibility = wzAt === 0 ? 'hidden' : 'visible';
-  $('wzNext').textContent = wzAt === STEPS.length - 1 ? 'Crear mi rutina' : 'Seguir';
+  $('wzNext').textContent = wzAt === list.length - 1 ? 'Crear mi rutina' : 'Seguir';
   const first = $('wzBody').querySelector('input');
   if (first) first.focus();
   window.scrollTo(0, 0);
@@ -453,9 +687,17 @@ $('wzBody').addEventListener('click', (ev) => {
   if (!b) return;
   const d = b.dataset;
   if (d.single) {
-    draft[d.single] = d.val;
+    /* La duración se elige entre opciones, pero sigue siendo un número. */
+    draft[d.single] = d.single === 'minutes' ? Number(d.val) : d.val;
     /* Cambiar de unidades reinterpreta lo que ya se escribió. */
-    if (d.single === 'units') draft.weightInput = '';
+    if (d.single === 'units') { draft.weightInput = ''; draft.maxes = maxDraft(); }
+    /* Si ahora no quiere repetir músculos, una estructura que sí repite deja
+       de ser válida: se vuelve a "elige por mí" en vez de guardar algo que
+       contradice lo que acaba de contestar. */
+    if (d.single === 'overlap_pref' && d.val === 'evitar'
+      && STRUCTURES[draft.structure] && STRUCTURES[draft.structure].overlap) {
+      draft.structure = 'auto';
+    }
     renderStep();
     return;
   }
@@ -483,10 +725,21 @@ $('wzBody').addEventListener('click', (ev) => {
 });
 
 $('wzBody').addEventListener('input', (ev) => {
+  const err = $('wzErr');
+  /* Máximos: se recalcula en vivo el 1RM estimado y el Training Max de ese
+     levantamiento, para que se vea la cuenta antes de guardarla. */
+  const mx = ev.target.dataset.max;
+  if (mx) {
+    const [lift, field] = mx.split('|');
+    if (draft.maxes[lift]) draft.maxes[lift][field] = ev.target.value;
+    const out = $(`mx-${lift}-out`);
+    if (out) out.textContent = maxLine(lift);
+    if (err) err.textContent = '';
+    return;
+  }
   const f = ev.target.dataset.field;
   if (!f) return;
   draft[f] = ev.target.value;
-  const err = $('wzErr');
   if (err) err.textContent = '';
 });
 
@@ -495,14 +748,13 @@ $('wzBack').addEventListener('click', () => {
 });
 
 $('wzNext').addEventListener('click', async () => {
-  const s = STEPS[wzAt];
-  /* Normaliza los campos de texto antes de validar. */
-  if (typeof draft.name === 'string') draft.name = draft.name;
+  const list = steps();
+  const s = list[wzAt];
   if (!s.valid()) {
     $('wzErr').textContent = s.err || 'Falta algo por rellenar.';
     return;
   }
-  if (wzAt < STEPS.length - 1) { wzAt++; renderStep(); return; }
+  if (wzAt < list.length - 1) { wzAt++; renderStep(); return; }
   await finishWizard();
 });
 
@@ -539,13 +791,20 @@ async function finishWizard() {
     limitations,
     priorities: draft.priorities,
     interests: draft.interests,
+    structure: draft.structure,
+    overlap_pref: draft.overlap_pref,
+    volume_pref: draft.volume_pref,
+    variety_pref: draft.variety_pref,
     onboarded: true,
   };
 
   try {
     profile = await db.saveProfile(user.id, patch);
-    const r = generateRoutine(profile);
+    const use531 = draft.goal === 'fuerza' && draft.program === '531';
+    if (use531) await saveMaxesFromDraft();
+    const r = use531 ? S.build531Routine(profile) : generateRoutine(profile);
     await db.saveRoutine(profile.id, r);
+    if (use531) await startWave();
     if (weightKg) {
       await db.write('weight', { profileId: profile.id, kg: weightKg }).catch(() => {});
     }
@@ -559,6 +818,41 @@ async function finishWizard() {
     btn.disabled = false;
     btn.textContent = 'Crear mi rutina';
   }
+}
+
+/**
+ * Guarda los cuatro máximos escritos en el cuestionario.
+ * El Training Max es el 90 % del 1RM estimado, redondeado a peso cargable.
+ * `source` distingue lo que dijo el usuario ('manual') de lo que sale de una
+ * serie de varias repeticiones ('calculado').
+ */
+async function saveMaxesFromDraft() {
+  for (const lift of S.LIFTS) {
+    const e = maxE1rmKg(lift);
+    if (!e) continue;
+    const reps = Math.round(U.num(draft.maxes[lift].r) || 1);
+    await db.write('liftmax', {
+      profileId: profile.id,
+      lift,
+      patch: {
+        e1rm_kg: e,
+        training_max_kg: S.tmFromE1rm(e, draft.units),
+        source: reps > 1 ? 'calculado' : 'manual',
+      },
+    }, `liftmax:${lift}`).catch(() => {});
+  }
+  await loadStrength();
+}
+
+/** Arranca la ola 1, semana 1, archivando cualquier ola anterior. */
+async function startWave() {
+  try {
+    WAVE.cycle = await db.startCycle(profile.id, { scheme: '531', cycle_num: 1, week: 1 });
+  } catch (e) {
+    console.warn('ola no creada', db.msgError(e));
+  }
+  UI.tmDrop = {};
+  saveUI();
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -923,7 +1217,12 @@ function openToday() {
    6 · CREAR RUTINA
    ══════════════════════════════════════════════════════════════════════════ */
 
-const CREATE = { equipment: [], goal: 'musculo', days: 3, minutes: 45, priorities: [] };
+const CREATE = {
+  equipment: [], goal: 'musculo', days: 3, minutes: 45, priorities: [],
+  /* 'auto' = generador normal · '531' = plantilla por porcentajes */
+  program: 'auto',
+  maxes: {},
+};
 
 function renderCreate() {
   CREATE.equipment = (profile.equipment || ['libre', 'maquina']).slice();
@@ -931,6 +1230,7 @@ function renderCreate() {
   CREATE.days = profile.days_per_week || 3;
   CREATE.minutes = profile.minutes || 45;
   CREATE.priorities = (profile.priorities || []).slice();
+  if (CREATE.goal !== 'fuerza') CREATE.program = 'auto';
   document.querySelectorAll('[data-eq]').forEach((b) => {
     b.setAttribute('aria-pressed', String(CREATE.equipment.includes(b.dataset.eq)));
   });
@@ -939,6 +1239,71 @@ function renderCreate() {
   });
   $('n-days').textContent = CREATE.days;
   $('n-minutes').textContent = CREATE.minutes;
+  renderProgram();
+}
+
+/** ¿Están los cuatro Training Max guardados? Sin ellos no hay 5/3/1. */
+function hasAllMaxes() {
+  return S.LIFTS.every((l) => WAVE.maxes[l] && Number(WAVE.maxes[l].training_max_kg) > 0);
+}
+
+/**
+ * Oferta del programa por porcentajes. Solo aparece con objetivo fuerza y
+ * nunca sustituye al generador por su cuenta: hay que elegirlo.
+ */
+function renderProgram() {
+  const box = $('progBox');
+  if (!box) return;
+  if (CREATE.goal !== 'fuerza') { box.innerHTML = ''; return; }
+  const u = units();
+  const falta = !hasAllMaxes();
+  const opts = [
+    ['auto', 'Generador normal',
+      'Usa tus días, tu equipo y tus prioridades. Los básicos van con una serie pesada '
+      + 'y series de respaldo.'],
+    ['531', 'Programa 5/3/1 por porcentajes',
+      'Cuatro días torso/pierna. Banca, sentadilla, militar y peso muerto con porcentajes '
+      + 'del Training Max y una serie AMRAP cada semana.'],
+  ];
+  box.innerHTML = `<h2 class="sec">Programa</h2>
+    <div class="opts">${opts.map(([v, t, d]) => `<button class="opt-card" type="button"
+      data-prog="${v}" aria-pressed="${CREATE.program === v}">
+      <span class="mark" aria-hidden="true">●</span>
+      <span class="grow"><h4>${esc(t)}</h4><p>${esc(d)}</p></span></button>`).join('')}</div>
+    ${CREATE.program === '531' ? (falta
+    ? `<div class="panel p" style="margin-top:10px">
+        <p class="lbl">Faltan tus máximos</p>
+        <p class="note" style="margin-top:6px">Sin los cuatro máximos no se pueden calcular los
+          porcentajes. Pon tu mejor serie reciente de cada levantamiento (peso y repeticiones)
+          o tu máximo con 1 repetición.</p>
+        ${S.LIFTS.map((l) => `<div class="field"><div class="grow"><h4>${esc(S.LIFT_LABEL[l])}</h4>
+          <p id="cm-${l}-out">${esc(createMaxLine(l))}</p></div>
+          <div class="pair" style="width:150px;flex:none">
+            <input class="in mono" data-cmax="${l}|w" type="text" inputmode="decimal"
+              aria-label="Peso de ${esc(S.LIFT_LABEL[l])} en ${U.wLabel(u)}"
+              value="${esc((CREATE.maxes[l] || {}).w || '')}" placeholder="${u === 'lb' ? '225' : '100'}">
+            <input class="in mono" data-cmax="${l}|r" type="text" inputmode="numeric"
+              aria-label="Repeticiones de ${esc(S.LIFT_LABEL[l])}"
+              value="${esc((CREATE.maxes[l] || {}).r || '1')}" placeholder="1">
+          </div></div>`).join('')}
+        <button class="btn ghost" id="saveMax" type="button" style="margin-top:11px">Guardar máximos</button>
+        <p class="note" id="maxMsg"></p></div>`
+    : `<div class="panel p" style="margin-top:10px">
+        <p class="lbl">Tus Training Max</p>
+        <div class="chips" style="margin-top:8px">${S.LIFTS.map((l) => `<span class="chip">
+          ${esc(S.LIFT_LABEL[l])} ${esc(w2(WAVE.maxes[l].training_max_kg))}</span>`).join('')}</div>
+        <p class="note">Se editan en Ajustes › Fuerza. El programa dura 4 semanas y al cerrarlas
+          sube el TM automáticamente.</p></div>`) : ''}`;
+}
+
+function createMaxLine(l) {
+  const m = CREATE.maxes[l] || {};
+  const kg = U.fromInput(m.w || '', units());
+  const reps = Math.max(1, Math.min(15, Math.round(U.num(m.r || '1') || 1)));
+  if (kg <= 0) return 'Peso × repeticiones';
+  const e = U.e1rm(kg, reps) || 0;
+  if (!e) return 'Peso × repeticiones';
+  return `1RM ≈ ${w2(e)} · TM ${w2(S.tmFromE1rm(e, units()))}`;
 }
 
 function bindCreate() {
@@ -956,10 +1321,57 @@ function bindCreate() {
   document.querySelectorAll('[data-f]').forEach((b) => {
     b.addEventListener('click', () => {
       CREATE.goal = b.dataset.f;
+      if (CREATE.goal !== 'fuerza') CREATE.program = 'auto';
       document.querySelectorAll('[data-f]').forEach((x) => {
         x.setAttribute('aria-pressed', String(x === b));
       });
+      renderProgram();
     });
+  });
+
+  /* Elección de programa y alta de máximos, todo dentro de #progBox. */
+  $('progBox').addEventListener('click', async (ev) => {
+    const p = ev.target.closest('[data-prog]');
+    if (p) { CREATE.program = p.dataset.prog; renderProgram(); return; }
+    if (ev.target.id !== 'saveMax') return;
+    const msg = $('maxMsg');
+    const pend = S.LIFTS.filter((l) => {
+      const m = CREATE.maxes[l] || {};
+      return U.fromInput(m.w || '', units()) > 0;
+    });
+    if (pend.length < S.LIFTS.length) {
+      msg.textContent = 'Faltan levantamientos por rellenar.';
+      return;
+    }
+    msg.textContent = 'Guardando…';
+    for (const l of S.LIFTS) {
+      const m = CREATE.maxes[l];
+      const reps = Math.max(1, Math.min(15, Math.round(U.num(m.r || '1') || 1)));
+      const e = U.e1rm(U.fromInput(m.w, units()), reps);
+      if (!e) continue;
+      await db.write('liftmax', {
+        profileId: profile.id,
+        lift: l,
+        patch: {
+          e1rm_kg: e,
+          training_max_kg: S.tmFromE1rm(e, units()),
+          source: reps > 1 ? 'calculado' : 'manual',
+        },
+      }, `liftmax:${l}`).catch(() => {});
+    }
+    await loadStrength();
+    renderProgram();
+    renderSettings();
+  });
+
+  $('progBox').addEventListener('input', (ev) => {
+    const cm = ev.target.dataset.cmax;
+    if (!cm) return;
+    const [l, f] = cm.split('|');
+    CREATE.maxes[l] = CREATE.maxes[l] || { w: '', r: '1' };
+    CREATE.maxes[l][f] = ev.target.value;
+    const out = $(`cm-${l}-out`);
+    if (out) out.textContent = createMaxLine(l);
   });
   document.addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-n]');
@@ -1006,19 +1418,31 @@ async function doGenerate() {
   try {
     /* Los ajustes de esta pantalla se guardan en el perfil: son los mismos
        campos que pidió el cuestionario, así que la rutina es reproducible. */
+    const use531 = CREATE.goal === 'fuerza' && CREATE.program === '531';
+    if (use531 && !hasAllMaxes()) {
+      $('genOut').innerHTML = `<p class="err" style="margin-top:12px">Para el 5/3/1 hacen falta
+        los cuatro máximos. Rellénalos arriba y pulsa Guardar máximos.</p>`;
+      btn.textContent = 'Generar y guardar rutina';
+      btn.disabled = false;
+      return;
+    }
     profile = await db.saveProfile(profile.id, {
       equipment: CREATE.equipment,
       goal: CREATE.goal,
-      days_per_week: CREATE.days,
+      days_per_week: use531 ? 4 : CREATE.days,
       minutes: CREATE.minutes,
       priorities: CREATE.priorities,
+      ...(use531 ? { structure: 'upper_lower' } : {}),
     });
-    PREVIEW = generateRoutine(profile);
+    PREVIEW = use531 ? S.build531Routine(profile) : generateRoutine(profile);
     await db.saveRoutine(profile.id, PREVIEW);
+    if (use531) await startWave();
     await loadRoutine();
+    renderCreate();
     renderPreview();
     renderWork();
     renderDash();
+    renderSettings();
     btn.textContent = 'Generar y guardar rutina';
     btn.disabled = false;
   } catch (e) {
@@ -1026,6 +1450,33 @@ async function doGenerate() {
     btn.textContent = 'Generar y guardar rutina';
     btn.disabled = false;
   }
+}
+
+/**
+ * Resumen auditable de series semanales por músculo.
+ * Cuenta las series directas más media serie por cada aportación indirecta
+ * (los tríceps de todos los press, por ejemplo): es la cuenta con la que se
+ * compara el rango del nivel, y por eso lleva decimales.
+ */
+function volumeHtml(days, target, titulo) {
+  const rows = weeklyVolume(days, target);
+  if (!rows.length) return '';
+  const estado = { alto: 'por encima', bajo: 'por debajo', rango: 'en rango' };
+  return `<h2 class="sec">${esc(titulo || 'Series por músculo y semana')}</h2>
+    <div class="panel p">
+      <p class="note" style="margin:0 0 8px">Rango objetivo por tu nivel y tu nivel de exigencia:
+        <b>${target.low}-${target.high} series</b> por músculo y semana. Las series de
+        calentamiento no cuentan.</p>
+      ${rows.map((r) => {
+    const p = Math.min(100, Math.round(r.sets / Math.max(1, target.high) * 100));
+    const cls = r.state === 'alto' ? 'hi' : r.state === 'bajo' ? 'lo' : '';
+    return `<div class="mrow"><div class="grow"><h4>${esc(r.muscle)}</h4>
+      <p>${U.fmtNum(r.sets, 1)} series · ${U.fmtNum(r.direct, 1)} directas
+      ${r.indirect ? `+ ${U.fmtNum(r.indirect, 1)} indirectas` : ''} ·
+      ${r.days} ${r.days === 1 ? 'día' : 'días'} · ${estado[r.state]}</p>
+      <div class="track"><i class="${cls}" style="width:${p}%"></i></div></div></div>`;
+  }).join('')}
+    </div>`;
 }
 
 function renderPreview() {
@@ -1051,8 +1502,10 @@ function renderPreview() {
     </div>`;
   }).join('')}
   <p class="note">Generada con tu perfil: ${profile.days_per_week} días, ${profile.minutes} min
-  (≈${exercisesPerSession(profile.minutes)} ejercicios), objetivo ${esc(profile.goal)}, nivel ${esc(profile.level)}.
-  ${banned.length ? `Se han excluido los ejercicios que cargan: ${esc(banned.join(', '))}.` : 'Sin exclusiones por molestias.'}</p>`;
+  (≈${exercisesPerSession(profile.minutes, profile.goal)} ejercicios), objetivo ${esc(profile.goal)}, nivel ${esc(profile.level)}.
+  ${banned.length ? `Se han excluido los ejercicios que cargan: ${esc(banned.join(', '))}.` : 'Sin exclusiones por molestias.'}</p>
+  ${(PREVIEW.notes || []).map((n) => `<p class="hint warn">${esc(n)}</p>`).join('')}
+  ${volumeHtml(PREVIEW.days, PREVIEW.target || volumeTarget(profile.level, profile.volume_pref))}`;
 }
 
 /* ── Dictado por voz ── */

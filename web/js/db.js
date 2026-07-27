@@ -140,9 +140,26 @@ export async function saveProfile(id, patch) {
 
 /* ══ Rutinas ════════════════════════════════════════════════════════════ */
 
+/* Columnas reales de routine_exercises. El generador devuelve más campos de
+   los que existen en la tabla (`pat`, por ejemplo, que solo se usa en memoria
+   para el control de volumen): si se enviaran tal cual, PostgREST rechazaría
+   la inserción entera por columna desconocida. */
+const EX_COLS = ['position', 'name', 'slug', 'muscle', 'equipment', 'role',
+  'sets', 'rep_low', 'rep_high', 'rir', 'rest_s', 'is_time', 'scheme'];
+
+function exerciseRow(x, dayId) {
+  const out = { day_id: dayId };
+  EX_COLS.forEach((k) => { if (x[k] !== undefined) out[k] = x[k]; });
+  return out;
+}
+
 /**
  * Escribe una rutina generada. Desactiva las anteriores para que solo haya
  * una activa, y crea días y ejercicios en dos inserciones en bloque.
+ *
+ * Desactivar en vez de borrar es deliberado: las sesiones ya registradas
+ * cuelgan de `routine_days`, así que borrar una rutina se llevaría por
+ * delante el historial. Regenerar deja la anterior archivada.
  */
 export async function saveRoutine(profileId, routine) {
   await supabase.from('routines').update({ active: false })
@@ -169,7 +186,7 @@ export async function saveRoutine(profileId, routine) {
   routine.days.forEach((d) => {
     const row = byIndex.get(d.day_index);
     if (!row) return;
-    (d.exercises || []).forEach((x) => exRows.push({ ...x, day_id: row.id }));
+    (d.exercises || []).forEach((x) => exRows.push(exerciseRow(x, row.id)));
   });
   if (exRows.length) {
     const { error: e3 } = await supabase.from('routine_exercises').insert(exRows);
@@ -184,7 +201,8 @@ export async function getActiveRoutine(profileId) {
     .select(`id, name, focus, weeks, active, created_at,
              routine_days ( id, day_index, name, is_rest,
                routine_exercises ( id, position, name, slug, muscle, equipment,
-                                   sets, rep_low, rep_high, rir, rest_s, is_time ) )`)
+                                   role, sets, rep_low, rep_high, rir, rest_s,
+                                   is_time, scheme ) )`)
     .eq('profile_id', profileId).eq('active', true)
     .order('created_at', { ascending: false })
     .limit(1).maybeSingle();
@@ -385,6 +403,72 @@ export async function getSetsForSessions(sessionIds) {
   return data || [];
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   FUERZA POR PORCENTAJES · máximos y olas
+   ──────────────────────────────────────────────────────────────────────────
+   `lift_maxes` guarda, por levantamiento, el 1RM estimado y el Training Max
+   sobre el que se calculan TODOS los porcentajes. Ambos en kg canónicos, como
+   el resto de la base: las libras son solo presentación.
+
+   `strength_cycles` guarda en qué punto de la ola está el usuario (ola nº y
+   semana 1-4). Solo hay una fila activa por perfil.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/** Máximos por levantamiento, indexados por `lift`. {} si no hay ninguno. */
+export async function getLiftMaxes(profileId) {
+  const { data, error } = await supabase.from('lift_maxes')
+    .select('lift, e1rm_kg, training_max_kg, source, updated_at')
+    .eq('profile_id', profileId);
+  if (error) throw error;
+  const map = {};
+  (data || []).forEach((r) => { map[r.lift] = r; });
+  return map;
+}
+
+/**
+ * Alta o actualización del máximo de un levantamiento.
+ * `patch` va en kg canónicos: { e1rm_kg, training_max_kg, source }.
+ */
+export async function saveLiftMax(profileId, lift, patch) {
+  const { error } = await supabase.from('lift_maxes').upsert({
+    profile_id: profileId, lift, ...patch, updated_at: new Date().toISOString(),
+  }, { onConflict: 'profile_id,lift' });
+  if (error) throw error;
+}
+
+/** Ola activa del perfil, o null si todavía no hay ninguna. */
+export async function getActiveCycle(profileId) {
+  const { data, error } = await supabase.from('strength_cycles')
+    .select('*').eq('profile_id', profileId).eq('active', true)
+    .order('started_at', { ascending: false })
+    .limit(1).maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+/** Arranca una ola nueva y archiva las anteriores (no las borra). */
+export async function startCycle(profileId, row) {
+  await supabase.from('strength_cycles').update({ active: false })
+    .eq('profile_id', profileId).eq('active', true);
+  const { data, error } = await supabase.from('strength_cycles').insert({
+    profile_id: profileId,
+    scheme: (row && row.scheme) || '531',
+    cycle_num: (row && row.cycle_num) || 1,
+    week: (row && row.week) || 1,
+    active: true,
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+/** Mueve la ola de semana (o de ola al cerrarla). */
+export async function updateCycle(cycleId, patch) {
+  const { data, error } = await supabase.from('strength_cycles')
+    .update(patch).eq('id', cycleId).select().single();
+  if (error) throw error;
+  return data;
+}
+
 /* ══ Peso corporal ══════════════════════════════════════════════════════ */
 
 export async function getWeights(profileId, limit = 30) {
@@ -423,6 +507,10 @@ const HANDLERS = {
   note: (p) => saveNote(p.profileId, p.exercise, p.note),
   weight: (p) => logWeight(p.profileId, p.kg, p.loggedOn),
   profile: (p) => saveProfile(p.id, p.patch),
+  /* El máximo de un levantamiento es un upsert por (perfil, lift): reintentarlo
+     desde la cola reescribe la misma fila en vez de duplicarla. */
+  liftmax: (p) => saveLiftMax(p.profileId, p.lift, p.patch),
+  cycle: (p) => updateCycle(p.cycleId, p.patch),
 };
 
 function readQueue() {

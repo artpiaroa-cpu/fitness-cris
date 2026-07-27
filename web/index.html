@@ -133,7 +133,11 @@
     <div class="bar"><div class="grow"><p class="lbl" id="workLbl">Programa activo</p><h1 class="title">Entrenar</h1></div></div>
     <div class="days" id="days"></div>
     <div class="pad">
+      <!-- Estado de la ola de fuerza: solo se pinta con una rutina 5/3/1. -->
+      <div id="waveBox"></div>
       <div class="panel" style="margin-top:13px"><div id="wlist"></div></div>
+      <!-- Auditoría del reparto: series semanales por músculo. -->
+      <div id="volBox"></div>
       <h2 class="sec">Modo</h2>
       <div class="g2">
         <button class="pick" type="button" data-mode="hyper" aria-pressed="true">Hipertrofia</button>
@@ -176,6 +180,8 @@
           <div class="num-in"><button type="button" data-n="minutes" data-d="-5" aria-label="Menos minutos">−</button>
             <span class="v" id="n-minutes">45</span><button type="button" data-n="minutes" data-d="5" aria-label="Más minutos">+</button></div></div>
       </div>
+      <!-- Con objetivo fuerza se ofrece la plantilla por porcentajes. -->
+      <div id="progBox"></div>
       <button class="btn" id="gen" type="button" style="margin-top:13px">Generar y guardar rutina</button>
       <div id="genOut"></div>
     </div>
@@ -275,6 +281,15 @@
 
       <h2 class="sec">Tu perfil</h2>
       <div class="panel p" id="setProfile"></div>
+
+      <h2 class="sec">Tu semana</h2>
+      <div class="panel p" id="setPrefs"></div>
+      <button class="btn ghost" id="regen" type="button" style="margin-top:11px">Regenerar rutina</button>
+      <p class="note" id="regenMsg">Se crea una rutina nueva con estas respuestas. La anterior se archiva:
+        no se borra nada de tu historial.</p>
+
+      <h2 class="sec">Fuerza</h2>
+      <div class="panel p" id="setStrength"></div>
 
       <h2 class="sec">Sesión</h2>
       <div class="panel p">
