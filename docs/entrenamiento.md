@@ -267,6 +267,44 @@ solo se mueve al cerrar un ciclo.
 
 ---
 
+## 7. La serie Bilbo de entrada en los días de torso
+
+El método Bilbo es de Jesús Varela, pressbanquista español con 225 kg de
+banca. Su idea central es **una sola serie de muchas repeticiones al principio
+de la sesión**, con una carga que sube cada vez, y después el entreno normal.
+En la plantilla 5/3/1 abre los dos días de torso (lunes y jueves), que quedan
+a 72 h, la frecuencia de dos veces por semana que se recomienda.
+
+| Fase | Cuándo | Qué hace la app |
+| --- | --- | --- |
+| Inicio | Primera serie Bilbo | 50 % del 1RM de banca |
+| Acumulación | Última serie con 15 reps o más | +2,5 kg / +5 lb |
+| Transición | Última serie con 5–14 reps | +2,5 kg / +5 lb |
+| Ciclo cerrado | Última serie con menos de 5 | Vuelta al 50 % del 1RM actual |
+
+**Ejecución.** Subida explosiva, bajada controlada, tocar el pecho sin rebotar
+ni pausar. La serie se corta cuando la barra se frena mucho o la técnica se
+rompe: lejos del fallo, no al fallo.
+
+**Por qué va con nombre propio.** Se registra como `Press de banca · serie
+Bilbo` y no como la banca de la ola. Así su "última vez" es siempre la última
+serie Bilbo, y no aprende un 1RM de una serie de 30 repeticiones, que está
+muy fuera de lo que Epley y Brzycki pueden estimar.
+
+**Lo que hay que vigilar.** En el torso pesado la serie Bilbo va justo antes
+de la banca 5/3/1, así que la AMRAP llega con algo de fatiga. Si la AMRAP de
+la semana 3 empieza a caer por debajo de 3 repeticiones por eso, y no porque
+el Training Max esté alto, lo correcto es mover la Bilbo al final del día o
+dejarla solo en el torso ligero, no bajar el TM.
+
+**Cautela con las fuentes.** Todo lo que se publica del método es divulgación
+o testimonio, no estudios controlados, y los detalles no coinciden entre
+fuentes: el rango inicial va del 40 al 70 % del 1RM y las series de 15 a 50
+repeticiones. Los números de la tabla son la versión más repetida, empezando
+por lo bajo.
+
+---
+
 ## Fuentes
 
 - Schoenfeld, Grgic et al. — [*Effects of Resistance Training Frequency on Measures of Muscle Hypertrophy: A Systematic Review and Meta-Analysis*](https://www.researchgate.net/publication/301578131_Effects_of_Resistance_Training_Frequency_on_Measures_of_Muscle_Hypertrophy_A_Systematic_Review_and_Meta-Analysis) (2016)
@@ -276,6 +314,9 @@ solo se mueve al cerrar un ciclo.
 - Stronger by Science — [*The New Approach to Training Volume*](https://www.strongerbyscience.com/the-new-approach-to-training-volume/)
 - Juggernaut Training Systems — [*Understanding Volume*](https://www.jtsstrength.com/understanding-volume/)
 - PowerliftingTechnique — [*How Powerlifters Use Top and Working Sets*](https://powerliftingtechnique.com/how-powerlifters-use-top-and-working-sets-to-build-max-strength/)
+- Bilbo Team (Jesús Varela) — [*What is The Bilbo Method?*](https://bilboteam.com/en/what-is-the-bilbo-method/)
+- Mundo Entrenamiento — [*Método Bilbo con Jesús Varela*](https://mundoentrenamiento.com/en/bilbo-method-with-jesus-varela/)
+- El Templo de la Fuerza — [*El Método Bilbo de Jesús Varela*](https://eltemplodelafuerza.com/el-metodo-bilbo/)
 
 > Nota: estas fuentes son literatura general de entrenamiento. El coach de
 > NotebookLM del repo (`scripts/ask_cited.py`) permite además citar los vídeos

@@ -2080,6 +2080,22 @@ function waveFor(i) {
   return e ? waveOf(e.name) : null;
 }
 
+/* ══ La serie Bilbo dentro de la sesión ══════════════════════════════════
+   Una sola serie cuyo peso sale de la ÚLTIMA serie Bilbo (o del 50 % del 1RM
+   de banca si no hay ninguna). Como `lastBest` va por nombre de ejercicio y
+   la serie Bilbo tiene el suyo, esa última vez nunca es una serie de la ola. */
+
+function bilboFor(i) {
+  const e = SESS.ex[i];
+  if (!e || !S.isBilbo(e.name)) return null;
+  const bench = SG.resolveE1rm(WAVE.maxes, S.LIFT_EXERCISE.banca);
+  return S.bilboPlan({
+    e1rmKg: bench ? bench.kg : 0,
+    last: lastBest[e.name] || null,
+    units: units(),
+  });
+}
+
 /**
  * Series de trabajo de un ejercicio. La ola manda cuando la hay, porque su
  * número de series cambia con la semana: 3 de trabajo + 2 de respaldo en las
@@ -2187,8 +2203,9 @@ function suggestReps(i, s) {
 function suggestFor(i, s) {
   const e = SESS.ex[i];
   /* Con la ola manda la ola: sus porcentajes van sobre el Training Max y no
-     sobre el 1RM, y mezclar las dos cuentas sería justo la confusión a evitar. */
-  if (!e || waveFor(i)) return null;
+     sobre el 1RM, y mezclar las dos cuentas sería justo la confusión a evitar.
+     La serie Bilbo lleva su propia progresión. */
+  if (!e || waveFor(i) || S.isBilbo(e.name)) return null;
   return SG.suggestWeight({
     maxes: WAVE.maxes,
     name: e.name,
@@ -2205,6 +2222,10 @@ function targetKg(i, s) {
   const w = waveFor(i);
   if (w) return w.work[s] ? w.work[s].kg : null;
   const e = SESS.ex[i];
+  if (S.isBilbo(e.name)) {
+    const b = bilboFor(i);
+    return b ? b.kg : null;
+  }
   const lb = lastBest[e.name];
   if (lb && lb.weight_kg != null && Number(lb.weight_kg) > 0) {
     let kg = Number(lb.weight_kg);
@@ -2219,7 +2240,7 @@ function targetKg(i, s) {
 /** ¿El peso de esta serie sale del porcentaje del 1RM? (para etiquetarlo) */
 function pctSource(i, s) {
   const e = SESS.ex[i];
-  if (!e || waveFor(i)) return null;
+  if (!e || waveFor(i) || S.isBilbo(e.name)) return null;
   const lb = lastBest[e.name];
   if (lb && lb.weight_kg != null && Number(lb.weight_kg) > 0) return null;
   const sg = suggestFor(i, s);
@@ -2237,7 +2258,7 @@ function targetReps(i, s) {
   const w = waveFor(i);
   if (w) return w.work[s] ? w.work[s].reps : 1;
   const e = SESS.ex[i];
-  if (e.is_time) return e.rep_low;
+  if (e.is_time || S.isBilbo(e.name)) return e.rep_low;
   if (UI.mode === 'fuerza' && s === 0) return Math.max(3, Math.min(5, e.rep_low));
   return e.rep_low;
 }
@@ -2248,6 +2269,7 @@ function targetRir(i, s) {
      deja siempre algo en el depósito, que es la gracia del Training Max. */
   if (w) return w.work[s] && w.work[s].amrap ? 0 : 1;
   const e = SESS.ex[i];
+  if (S.isBilbo(e.name)) return 1;
   if (UI.mode === 'fuerza' && s === 0) return 1;
   return e.rir;
 }
@@ -2256,6 +2278,7 @@ function repRange(i, s) {
   const w = waveFor(i);
   if (w && w.work[s]) return `${w.work[s].reps}${w.work[s].amrap ? '+' : ''}`;
   const e = SESS.ex[i];
+  if (S.isBilbo(e.name)) return `${e.rep_low}+`;
   if (e.is_time) return `${e.rep_low}-${e.rep_high} s`;
   if (UI.mode === 'fuerza' && s === 0) return '3-5';
   return `${e.rep_low}-${e.rep_high}`;
@@ -2268,6 +2291,17 @@ function warmups(i) {
   const w = waveFor(i);
   if (w) return w.warm.map((x) => ({ kg: x.kg, reps: x.reps, pct: x.pct }));
   const e = SESS.ex[i];
+  /* La serie Bilbo ya es ligera: basta la barra y una aproximación corta,
+     para no gastar repeticiones antes de la serie que cuenta. */
+  if (S.isBilbo(e.name)) {
+    const top = targetKg(i, 0);
+    const bar = U.barKg(units());
+    if (!top) return [];
+    const mid = roundKg(top * 0.7);
+    return mid > bar + 0.01
+      ? [{ kg: bar, reps: 10 }, { kg: mid, reps: 5 }]
+      : [{ kg: bar, reps: 10 }];
+  }
   if (UI.mode !== 'fuerza' || e.is_time || e.equipment !== 'libre') return [];
   const top = targetKg(i, 0);
   if (!top) return [];
@@ -2420,6 +2454,13 @@ function e1Html(i) {
   if (e.is_time) return 'sin e1RM';
   const u = units();
 
+  /* Un 1RM sacado de una serie de 30 repeticiones no significa nada: la
+     píldora dice en qué fase del ciclo Bilbo se está. */
+  if (S.isBilbo(e.name)) {
+    const b = bilboFor(i);
+    return b ? `Bilbo · ${esc(S.BILBO_PHASE_LABEL[b.phase])}` : 'Bilbo';
+  }
+
   /* En un básico de la ola, la píldora muestra el 1RM ESTIMADO DEL
      LEVANTAMIENTO, que es el número con el que se calcula el Training Max.
      Poner aquí el e1RM de una serie de respaldo al 65 % sería justo la
@@ -2516,6 +2557,11 @@ function autoMain(i, s) {
     return `${pct(x.pct)} del TM · ${U.fmtNum(x.display, 1)} ${U.wLabel(u)} · `
       + `${x.reps}${x.amrap ? '+' : ''}`;
   }
+  const b = bilboFor(i);
+  if (b) {
+    return `${b.pct ? `${pct(b.pct)} del 1RM · ` : ''}${U.fmtNum(b.display, 1)} ${U.wLabel(u)} · `
+      + `${repRange(i, s)}`;
+  }
   if (e.is_time) return `${targetReps(i, s)} s`;
   const t = targetKg(i, s);
   /* Sin peso que proponer: en peso corporal el que carga es el cuerpo, y en el
@@ -2535,6 +2581,9 @@ function autoSub(i, s) {
     if (x.amrap) return 'AMRAP · haz las que puedas';
     return x.kind === 'respaldo' ? `serie ${s + 1} · respaldo` : `serie ${s + 1} · trabajo`;
   }
+  const b = bilboFor(i);
+  if (b) return `serie única · ${S.BILBO_PHASE_LABEL[b.phase]}`;
+  if (S.isBilbo(e.name)) return 'serie única';
   if (e.is_time) return 'aguanta';
   const t = targetKg(i, s);
   if (t == null) return `${repRange(i, s)} · ${targetRir(i, s)} RIR`;
@@ -2586,13 +2635,16 @@ function renderFocus() {
   }
 
   const wave = waveFor(i);
+  const bilbo = S.isBilbo(e.name);
+  const bplan = bilbo ? bilboFor(i) : null;
   const total = nSets(i);
   for (let s = 0; s < total; s++) {
     const st = SESS.sets.get(key(i, s, false));
     const amrap = !!(wave && wave.work[s] && wave.work[s].amrap);
-    const isTop = amrap || (!wave && strength && s === 0);
+    const isTop = amrap || bilbo || (!wave && strength && s === 0);
+    const tag = bilbo ? 'BILBO' : (amrap ? 'AMRAP' : (isTop ? 'TOP' : s + 1));
     rows += `<div class="rp-r${st.done ? ' done' : ''}${isTop ? ' top' : ''}" id="rp-${i}-${s}">
-      <span class="rp-n${amrap ? ' amrap' : ''}">${amrap ? 'AMRAP' : (isTop ? 'TOP' : s + 1)}</span>
+      <span class="rp-n${amrap || bilbo ? ' amrap' : ''}">${tag}</span>
       <span class="rp-auto" aria-label="${esc(setLabel(i, s))}">${esc(autoMain(i, s))}<small>${esc(autoSub(i, s))}</small></span>
       <button class="kf" type="button" data-act="field" data-i="${i}" data-s="${s}" data-f="kg"
         id="kf-kg-${i}-${s}" aria-label="Peso de la serie ${s + 1} en ${U.wLabel(u)}">
@@ -2622,6 +2674,32 @@ function renderFocus() {
         Con menos de ${S.RESET_REPS} repeticiones al 95 %, lo habitual es bajarlo un 10 %.
         Puedes confirmarlo en Entrenar, en el recuadro de la ola.</p>`;
     }
+  } else if (bilbo) {
+    const wl = U.wLabel(u);
+    const inc = U.fmtNum(S.BILBO.inc[u === 'lb' ? 'lb' : 'kg'], 1);
+    hints += `<p class="hint pr"><b>Serie Bilbo: una sola serie, todas las repeticiones que
+      salgan con técnica limpia.</b> Sube explosiva, baja controlada, toca el pecho sin rebotar
+      ni pausar. Corta cuando la barra se frene mucho o la técnica se rompa: no es una serie al
+      fallo. Anota las repeticiones: de ellas sale el peso de la próxima vez.</p>`;
+    if (!bplan) {
+      hints += `<p class="hint warn"><b>Falta tu 1RM de banca.</b> El ciclo empieza al 50 % de
+        él. Apúntalo en Ajustes › Fuerza o empieza con un peso que muevas unas 25 veces.</p>`;
+    } else {
+      const ref = bplan.last
+        ? `La última vez: ${U.fmtNum(bplan.last.display, 1)} ${wl} × ${bplan.last.reps}. `
+        : '';
+      const why = {
+        inicio: `Empiezas al 50 % de tu 1RM de banca. Cada sesión subirás ${inc} ${wl}
+          mientras salgan ${S.BILBO.accumReps} repeticiones o más.`,
+        acumulacion: `Salieron ${S.BILBO.accumReps} o más, así que subes ${inc} ${wl}.`,
+        transicion: `Ya estás por debajo de ${S.BILBO.accumReps}: fase de transición. Sigues
+          subiendo ${inc} ${wl} por sesión; el ciclo cierra cuando bajes de ${S.BILBO.endReps}.`,
+        reinicio: `Bajaste de ${S.BILBO.endReps} repeticiones: ciclo cerrado. Vuelves al 50 %
+          de tu 1RM de banca para empezar el siguiente.`,
+      }[bplan.phase];
+      hints += `<p class="hint"><b>${esc(S.BILBO_PHASE_LABEL[bplan.phase][0].toUpperCase()
+        + S.BILBO_PHASE_LABEL[bplan.phase].slice(1))}.</b> ${esc(ref)}${esc(why)}</p>`;
+    }
   } else {
     hints += `<p class="hint"><b>Objetivo:</b> ${strength && !e.is_time
       ? `la serie TOP cerca del límite (${RIRTXT[1]}), y las de después más suaves.`
@@ -2629,7 +2707,9 @@ function renderFocus() {
   }
 
   const lb = lastBest[e.name];
-  if (lb) {
+  if (bilbo) {
+    /* La última vez y la propuesta ya se han explicado arriba. */
+  } else if (lb) {
     const when = new Date(lb.started_at);
     const lbl = `${when.getDate()} ${MES_CORTO[when.getMonth()]}`;
     const val = e.is_time
@@ -2947,7 +3027,9 @@ async function registerAmrap(i, s) {
  */
 async function learnE1rm(i, s) {
   const e = SESS.ex[i];
-  if (!e || e.is_time || waveFor(i)) return;
+  /* La serie Bilbo tampoco: 30 repeticiones están muy fuera de lo que las
+     fórmulas del 1RM saben estimar. */
+  if (!e || e.is_time || waveFor(i) || S.isBilbo(e.name)) return;
   const st = SESS.sets.get(key(i, s, false));
   if (!st || !st.done) return;
   if (!(Number(st.weight_kg) > 0) || !(Number(st.reps) > 0)) return;

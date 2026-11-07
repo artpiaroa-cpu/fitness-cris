@@ -207,6 +207,114 @@ export function amrapE1rm(kg, reps, rir) {
   return U.e1rm(kg, total);
 }
 
+/* ══ LA SERIE BILBO ══════════════════════════════════════════════════════
+   Método de Jesús Varela para el press de banca: UNA sola serie de muchas
+   repeticiones al principio de la sesión, y después el entreno normal. Aquí
+   abre los dos días de torso, que caen a 72 h (lunes y jueves), que es la
+   frecuencia que él recomienda.
+
+   Tres fases, decididas SOLO por la última serie Bilbo registrada:
+
+   · Acumulación — se empieza al 50 % del 1RM de banca y se suben 2,5 kg
+     (5 lb) cada sesión mientras salgan 15 repeticiones o más.
+   · Transición — por debajo de 15 se sigue subiendo igual; las series
+     pasan a ser de 5-14 repeticiones y el estímulo se acerca a la fuerza.
+   · Ciclo cerrado — por debajo de 5 el ciclo ha terminado: se vuelve a
+     empezar al 50 % del 1RM, que para entonces debería haber subido.
+
+   La serie va con el nombre propio de BILBO_EXERCISE y no con el de la banca
+   a propósito: así su historial no se mezcla con el de la ola 5/3/1, y "la
+   última vez" de una es siempre la última serie Bilbo, no una AMRAP al 85 %.
+
+   La ejecución importa tanto como la carga: subida explosiva, bajada
+   controlada, tocar el pecho sin rebotar ni pausar, y cortar cuando la barra
+   se frena o la técnica se rompe. No es una serie al fallo.                */
+
+export const BILBO_EXERCISE = 'Press de banca · serie Bilbo';
+
+export const BILBO = {
+  startPct: 0.5,
+  accumReps: 15,   // por debajo, transición
+  endReps: 5,      // por debajo, ciclo cerrado
+  inc: { kg: 2.5, lb: 5 },
+};
+
+export const BILBO_PHASE_LABEL = {
+  inicio: 'inicio de ciclo',
+  acumulacion: 'acumulación',
+  transicion: 'transición',
+  reinicio: 'ciclo nuevo',
+};
+
+export function isBilbo(name) {
+  return name === BILBO_EXERCISE;
+}
+
+/**
+ * Peso y fase de la próxima serie Bilbo.
+ * @param {object} o
+ * @param {number} o.e1rmKg  1RM estimado de banca, en kg canónicos
+ * @param {{weight_kg:number, reps:number}|null} o.last  última serie Bilbo
+ * @param {'kg'|'lb'} o.units
+ * @returns {{phase:string, kg:number, display:number, pct:number|null,
+ *            last:{display:number, reps:number}|null}|null}
+ *          null si no hay 1RM de banca ni serie previa de la que partir
+ */
+export function bilboPlan({ e1rmKg, last, units }) {
+  const u = units === 'lb' ? 'lb' : 'kg';
+  const e1 = Number(e1rmKg) || 0;
+  const lastKg = last ? Number(last.weight_kg) || 0 : 0;
+  const lastReps = last ? Number(last.reps) || 0 : 0;
+
+  const start = () => loadable(U.toDisplay(e1, u) * BILBO.startPct, u);
+  let phase;
+  let display;
+  if (lastKg > 0 && lastReps >= BILBO.endReps) {
+    phase = lastReps >= BILBO.accumReps ? 'acumulacion' : 'transicion';
+    display = loadable(U.toDisplay(lastKg, u) + BILBO.inc[u], u);
+  } else if (e1 > 0) {
+    phase = lastKg > 0 ? 'reinicio' : 'inicio';
+    display = start();
+  } else {
+    return null;
+  }
+
+  const kg = U.fromInput(display, u);
+  return {
+    phase,
+    kg,
+    display,
+    pct: e1 > 0 ? kg / e1 : null,
+    last: lastKg > 0 ? { display: U.toDisplay(lastKg, u), reps: lastReps } : null,
+  };
+}
+
+/** Fila de rutina de la serie Bilbo. Usa el GIF y el grupo de la banca. */
+function bilboRow(position) {
+  const bench = BY_NAME.get(LIFT_EXERCISE.banca) || {};
+  return {
+    position,
+    name: BILBO_EXERCISE,
+    slug: bench.en || null,
+    muscle: bench.g || 'Pecho',
+    equipment: 'libre',
+    role: 'principal',
+    sets: 1,
+    rep_low: BILBO.accumReps,
+    rep_high: 40,
+    rir: 1,
+    rest_s: 180,
+    is_time: false,
+    scheme: [{
+      kind: 'bilbo',
+      inicio_pct: BILBO.startPct,
+      sube: BILBO.inc,
+      acumulacion_min: BILBO.accumReps,
+      fin_ciclo_bajo: BILBO.endReps,
+    }],
+  };
+}
+
 /* ══ LA PLANTILLA DE 4 DÍAS ══════════════════════════════════════════════
    Torso pesado · Pierna pesado · Torso ligero · Pierna ligero. "Pesado" y
    "ligero" se refieren al carácter del día, no a la ola: los cuatro
@@ -222,11 +330,13 @@ export function amrapE1rm(kg, reps, rir) {
 
 const A = (name, sets, low, high, rir, rest, role) => ({ name, sets, low, high, rir, rest, role });
 
+/* `bilbo: true` abre el día con la serie Bilbo, antes del levantamiento. */
 export const TEMPLATE = [
   {
     day_index: 0,
     name: 'Torso pesado',
     lift: 'banca',
+    bilbo: true,
     accessories: [
       A('Press inclinado con mancuernas', 3, 6, 10, 2, 120, 'secundario'),
       A('Remo con barra', 3, 6, 10, 2, 120, 'secundario'),
@@ -249,6 +359,7 @@ export const TEMPLATE = [
     day_index: 3,
     name: 'Torso ligero',
     lift: 'militar',
+    bilbo: true,
     accessories: [
       A('Dominadas', 3, 6, 10, 2, 120, 'secundario'),
       A('Remo sentado en polea', 3, 10, 12, 2, 100, 'secundario'),
@@ -357,9 +468,10 @@ export function build531Routine(profile) {
     }
     const main = BY_NAME.get(LIFT_EXERCISE[tpl.lift]);
     const exercises = [];
+    if (tpl.bilbo) exercises.push(bilboRow(0));
     /* 3 series de trabajo + 2 de respaldo. En descarga son 3, y eso lo
        resuelve la sesión al recalcular la ola: aquí se guarda el máximo. */
-    exercises.push(row(main, 0, {
+    exercises.push(row(main, exercises.length, {
       sets: WEEKS[1].sets.length + BACKOFFS,
       low: 1, high: 5, rir: 1, rest: 210, role: 'principal',
       scheme: waveScheme(tpl.lift),

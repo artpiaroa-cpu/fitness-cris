@@ -92,8 +92,15 @@ export const POOL = [
 ];
 
 const BY_NAME = new Map(POOL.map((x) => [x.n, x]));
+
+/* Nombres que se registran aparte pero son el mismo ejercicio físico. No
+   entran en el POOL para que el generador y el cambio de ejercicio no los
+   elijan; solo heredan GIF, grupo y técnica. Ver la serie Bilbo en
+   strength.js. */
+const ALIAS = { 'Press de banca · serie Bilbo': 'Press de banca con barra' };
+
 /** Busca en el POOL por nombre exacto en español. */
-export function poolByName(name) { return BY_NAME.get(name) || null; }
+export function poolByName(name) { return BY_NAME.get(name) || BY_NAME.get(ALIAS[name]) || null; }
 
 /* ── Grupos musculares ────────────────────────────────────────────────────
    Los 19 `target` del dataset colapsados a los grupos con los que se
